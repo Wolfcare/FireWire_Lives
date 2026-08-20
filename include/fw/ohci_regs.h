@@ -171,8 +171,8 @@ extern "C" {
 #define OHCI_ContextControl_dualBufferMode  (1u << 27)
 
 /* ---- PhyControl ---- */
-#define OHCI_PhyControl_Read(addr)      (((addr) << 8) | (1u << 15))
-#define OHCI_PhyControl_Write(addr, d)  (((addr) << 8) | ((d) & 0xffu) | (1u << 14))
+#define OHCI_PhyControl_Read(addr)      ((((uint32_t)(addr)) << 8) | (1u << 15))
+#define OHCI_PhyControl_Write(addr, d)  ((((uint32_t)(addr)) << 8) | ((uint32_t)(d) & 0xffu) | (1u << 14))
 #define OHCI_PhyControl_ReadDone        (1u << 31)
 #define OHCI_PhyControl_WriteDone       (1u << 14)
 #define OHCI_PhyControl_ReadDataShift   16

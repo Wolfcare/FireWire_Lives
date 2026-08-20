@@ -1,23 +1,21 @@
 /*
  * FireWireLivesOHCI.iig - DriverKit interface declaration for the OHCI driver.
  *
- * NOT YET COMPILED. The DriverKit SDK ships only with Xcode, which is not
- * installed on the development machine yet, so this file has never been
- * through iig. Treat the API surface as reviewed-by-eye, not verified.
- * See docs/building.md.
+ * Processed by iig, which emits the C++ glue marshalling calls across the
+ * user/kernel boundary. Only the class declaration lives here; the
+ * implementation is in FireWireLivesOHCI.cpp.
  *
- * .iig files are processed by the IOKit Interface Generator, which emits the
- * C++ glue that marshals calls across the user/kernel boundary. Only the class
- * declaration lives here; the implementation is in FireWireLivesOHCI.cpp.
+ * Methods marked LOCALONLY are ordinary C++ member functions - iig generates
+ * no RPC for them.
  */
 
 #ifndef FireWireLivesOHCI_h
 #define FireWireLivesOHCI_h
 
-#include <Availability.h>
 #include <DriverKit/IOService.iig>
 #include <DriverKit/IOInterruptDispatchSource.iig>
 #include <DriverKit/IOBufferMemoryDescriptor.iig>
+#include <DriverKit/IODMACommand.iig>
 #include <DriverKit/IOMemoryMap.iig>
 #include <PCIDriverKit/IOPCIDevice.iig>
 
@@ -30,10 +28,6 @@ public:
     virtual kern_return_t Start(IOService *provider) override;
     virtual kern_return_t Stop(IOService *provider) override;
 
-    /* The userspace 1394 stack talks to us through this. */
-    virtual kern_return_t NewUserClient(uint32_t type,
-                                        IOUserClient **userClient) override;
-
     /*
      * Hardware interrupt callback. OHCI raises this for bus resets, self-ID
      * completion, and async/isochronous DMA context events.
@@ -43,15 +37,21 @@ public:
                                    uint64_t time)
         TYPE(IOInterruptDispatchSource::InterruptOccurred);
 
-protected:
-    /* ---- MMIO helpers over BAR0 ---- */
-    kern_return_t RegisterRead(uint32_t offset, uint32_t *value) LOCALONLY;
-    kern_return_t RegisterWrite(uint32_t offset, uint32_t value) LOCALONLY;
+    /* ---- MMIO helpers over BAR0 ----
+     *
+     * PCIDriverKit's MemoryRead32/MemoryWrite32 return void and signal a
+     * failed read by writing 0xffffffff, so these mirror that shape rather
+     * than inventing a kern_return_t that the underlying API cannot provide.
+     */
+    uint32_t RegisterRead(uint32_t offset) LOCALONLY;
+    void     RegisterWrite(uint32_t offset, uint32_t value) LOCALONLY;
 
-    /* ---- Controller bring-up, broken into the steps OHCI 1.1 mandates ---- */
+    /* ---- Controller bring-up, in the order OHCI 1.1 mandates ---- */
+    kern_return_t EnableBusMastering(void) LOCALONLY;
     kern_return_t ResetController(void) LOCALONLY;
     kern_return_t EnableLinkPowerStatus(void) LOCALONLY;
     kern_return_t ConfigureSelfIDBuffer(void) LOCALONLY;
+    kern_return_t SetupInterrupts(void) LOCALONLY;
     kern_return_t EnableLink(void) LOCALONLY;
 
     /* ---- Bus reset handling ---- */

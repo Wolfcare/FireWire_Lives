@@ -21,7 +21,7 @@ No hardware and no DriverKit SDK required.
 - [x] `fwprobe` hardware survey tool
 - [x] Bounds-safety under ASan/UBSan against truncated and hostile ROMs
 
-## M2 — controller bring-up 🚧 blocked on Xcode
+## M2 — controller bring-up 🚧 builds; not yet loaded
 
 Hardware validated 2026-08-20 with the Apple Thunderbolt-to-FireWire adapter
 attached. The controller enumerates and is unclaimed:
@@ -41,16 +41,20 @@ hold to claim this device, and it is exactly the one in our
 `FireWireLives.entitlements`. The architecture is confirmed against real
 hardware rather than inferred.
 
-- [ ] Install Xcode, get the DriverKit SDK
-- [ ] Compile the dext for the first time
+- [x] Install Xcode, get the DriverKit SDK (Xcode 26.6, DriverKit 25.5)
+- [x] Compile and link the dext; ad-hoc signed with the PCI transport
+      entitlement, links the same three libraries as Apple's own PCI dext
+- [x] Bring-up sequence written against the real PCIDriverKit API
+- [ ] **Disable SIP and enable dext developer mode** — required to load it
 - [ ] Match the OHCI controller and open the PCI device
 - [ ] Map BAR0, read `Version` — the first proof of life
 - [ ] Soft reset, LPS, link enable
-- [ ] **Resolve DMA under the DART IOMMU with 32-bit addressing** — the
-      biggest technical risk in the project, now confirmed present on the
-      real adapter; see `docs/architecture.md`. Note the DART maps at 16 KB
-      granularity while the self-ID buffer only needs 2 KB alignment, so a
-      whole mapper page is the practical minimum allocation.
+- [ ] **Resolve DMA under the DART IOMMU with 32-bit addressing.** Risk
+      downgraded: `IODMACommandSpecification` exposes `maxAddressBits`, so the
+      32-bit constraint OHCI needs is expressible in supported API, and
+      `PrepareForDMA` returns the IOVA segments to hand the controller. The
+      code is written; whether the DART honours it in practice is unproven
+      until the driver loads.
 - [ ] Self-ID buffer DMA, and a first real bus enumeration
 
 The milestone is done when `fwprobe` reports a real device's GUID and vendor

@@ -54,7 +54,8 @@ hardware rather than inferred.
 - [ ] Self-ID buffer DMA, and a first real bus enumeration
 
 The milestone is done when `fwprobe` reports a real device's GUID and vendor
-string, read off an actual FireWire bus.
+string, read off an actual FireWire bus. See `docs/test-hardware.md` for the
+specific hardware and the per-milestone acceptance criteria.
 
 ## M3 — transaction layer
 

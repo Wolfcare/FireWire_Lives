@@ -15,9 +15,11 @@
 	<key>CFBundlePackageType</key>
 	<string>DEXT</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.1.1</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
+	<key>OSMinimumDriverKitVersion</key>
+	<string>25.5</string>
 	<key>OSBundleUsageDescription</key>
 	<string>Provides FireWire (IEEE 1394) support for devices attached via a Thunderbolt to FireWire adapter.</string>
 
@@ -47,6 +49,20 @@
 			-->
 			<key>IOPCIClassMatch</key>
 			<string>0x0c001000&amp;0xffffff00</string>
+
+			<!--
+			  Required. macOS will not match a driver against a
+			  Thunderbolt-tunnelled PCI device unless the driver declares
+			  itself tunnel-compatible: a device on a hot-pluggable external
+			  bus can attempt DMA attacks, so the driver has to opt in.
+
+			  Our controller reports IOPCITunnelled = Yes (it lives in the
+			  Thunderbolt-to-FireWire adapter), so without this key matching is
+			  skipped silently - the extension installs and enables, and the
+			  driver is simply never started.
+			-->
+			<key>IOPCITunnelCompatible</key>
+			<true/>
 
 			<!-- Probe higher than nothing else, but this is the only claimant
 			     on macOS 26 since Apple's driver is gone. -->

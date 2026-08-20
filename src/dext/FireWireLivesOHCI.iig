@@ -54,6 +54,16 @@ public:
     kern_return_t SetupInterrupts(void) LOCALONLY;
     kern_return_t EnableLink(void) LOCALONLY;
 
+    /*
+     * Publish bring-up results into the IORegistry.
+     *
+     * DriverKit os_log output is not reliably retrievable after the fact, so
+     * the driver's state is exposed as registry properties instead. fwprobe
+     * reads them, which makes the bring-up externally verifiable rather than
+     * something only a live log stream could show.
+     */
+    void PublishStatus(void) LOCALONLY;
+
     /* ---- Bus reset handling ---- */
     void HandleBusReset(void) LOCALONLY;
     void HandleSelfIDComplete(void) LOCALONLY;

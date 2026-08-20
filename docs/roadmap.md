@@ -45,8 +45,10 @@ hardware rather than inferred.
 - [x] Compile and link the dext; ad-hoc signed with the PCI transport
       entitlement, links the same three libraries as Apple's own PCI dext
 - [x] Bring-up sequence written against the real PCIDriverKit API
-- [ ] **Disable SIP and enable dext developer mode** — required to load it
-- [ ] Match the OHCI controller and open the PCI device
+- [x] Disable SIP and enable dext developer mode
+- [x] **Driver loads and claims the controller** — `FireWireLivesOHCI` appears in
+      the IORegistry as a registered, matched, active child of the PCI device
+- [x] Match the OHCI controller and open the PCI device
 - [ ] Map BAR0, read `Version` — the first proof of life
 - [ ] Soft reset, LPS, link enable
 - [ ] **Resolve DMA under the DART IOMMU with 32-bit addressing.** Risk

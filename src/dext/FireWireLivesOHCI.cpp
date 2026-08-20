@@ -21,6 +21,9 @@
 #include <DriverKit/IODMACommand.h>
 #include <DriverKit/IODispatchQueue.h>
 #include <DriverKit/OSAction.h>
+#include <DriverKit/OSDictionary.h>
+#include <DriverKit/OSNumber.h>
+#include <DriverKit/OSBoolean.h>
 #include <PCIDriverKit/PCIDriverKit.h>
 
 #include "FireWireLivesOHCI.h"
@@ -66,6 +69,8 @@ struct FireWireLivesOHCI_IVars
     void                      *selfIDVirtualAddress;
 
     fw_topology_t              topology;
+    uint32_t                   ohciVersion;
+    uint64_t                   controllerGUID;
     uint32_t                   generation;
     uint16_t                   localNodeID;
     bool                       isRoot;
@@ -191,8 +196,16 @@ FireWireLivesOHCI::EnableLinkPowerStatus(void)
                 return kIOReturnNotReady;
             }
 
-            Log("LPS stable; OHCI version %u.%u",
-                (version >> 16) & 0xff, (version >> 8) & 0xff);
+            ivars->ohciVersion = version;
+
+            /* The controller's own EUI-64, readable once LPS is up. Proves we
+             * are talking to the FireWire chip and not reading back noise. */
+            uint32_t guidHi = RegisterRead(OHCI_GUIDHi);
+            uint32_t guidLo = RegisterRead(OHCI_GUIDLo);
+            ivars->controllerGUID = ((uint64_t)guidHi << 32) | guidLo;
+
+            Log("LPS stable; OHCI version %u.%u, GUID %08x%08x",
+                (version >> 16) & 0xff, (version >> 8) & 0xff, guidHi, guidLo);
             return kIOReturnSuccess;
         }
         IOSleep(1);
@@ -348,6 +361,45 @@ FireWireLivesOHCI::EnableLink(void)
     return kIOReturnSuccess;
 }
 
+void
+FireWireLivesOHCI::PublishStatus(void)
+{
+    OSDictionary *props = OSDictionary::withCapacity(16);
+    if (props == nullptr)
+        return;
+
+    /* Small helper: set a numeric property and drop our reference. */
+    #define PUT_NUM(key, value, bits)                                    \
+        do {                                                             \
+            OSNumber *_n = OSNumber::withNumber((uint64_t)(value), bits); \
+            if (_n) { props->setObject(key, _n); _n->release(); }         \
+        } while (0)
+
+    PUT_NUM("OHCIVersion",       ivars->ohciVersion, 32);
+    PUT_NUM("OHCIVersionMajor",  (ivars->ohciVersion >> 16) & 0xff, 32);
+    PUT_NUM("OHCIVersionMinor",  (ivars->ohciVersion >> 8) & 0xff, 32);
+    PUT_NUM("ControllerGUID",    ivars->controllerGUID, 64);
+    PUT_NUM("BARLength",         ivars->barLength, 64);
+    PUT_NUM("SelfIDBufferIOVA",  ivars->selfIDDeviceAddress, 64);
+    PUT_NUM("BusGeneration",     ivars->generation, 32);
+    PUT_NUM("LocalNodeID",       ivars->localNodeID, 32);
+    PUT_NUM("NodeCount",         ivars->topology.node_count, 32);
+    PUT_NUM("RootNodeID",        ivars->topology.root_id, 32);
+    PUT_NUM("GapCount",          ivars->topology.gap_count, 32);
+
+    props->setObject("IsRoot", ivars->isRoot ? kOSBooleanTrue : kOSBooleanFalse);
+    props->setObject("GapCountConsistent",
+                     ivars->topology.gap_count_consistent ? kOSBooleanTrue
+                                                          : kOSBooleanFalse);
+    props->setObject("DMAMappedThroughDART",
+                     ivars->selfIDDeviceAddress ? kOSBooleanTrue
+                                                : kOSBooleanFalse);
+    #undef PUT_NUM
+
+    SetProperties(props);
+    props->release();
+}
+
 /* ------------------------------------------------------------------ */
 /* PHY register access                                                 */
 /* ------------------------------------------------------------------ */
@@ -491,6 +543,8 @@ FireWireLivesOHCI::HandleSelfIDComplete(void)
 
     if (!ivars->topology.gap_count_consistent)
         Log("gap counts disagree; a PHY config packet is needed");
+
+    PublishStatus();
 }
 
 /* ------------------------------------------------------------------ */
@@ -550,6 +604,7 @@ IMPL(FireWireLivesOHCI, Start)
     if ((ret = SetupInterrupts())       != kIOReturnSuccess) goto fail;
     if ((ret = EnableLink())            != kIOReturnSuccess) goto fail;
 
+    PublishStatus();
     RegisterService();
     Log("started");
     return kIOReturnSuccess;

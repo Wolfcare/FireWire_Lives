@@ -1,0 +1,66 @@
+/*
+ * FireWireLivesOHCI.iig - DriverKit interface declaration for the OHCI driver.
+ *
+ * NOT YET COMPILED. The DriverKit SDK ships only with Xcode, which is not
+ * installed on the development machine yet, so this file has never been
+ * through iig. Treat the API surface as reviewed-by-eye, not verified.
+ * See docs/building.md.
+ *
+ * .iig files are processed by the IOKit Interface Generator, which emits the
+ * C++ glue that marshals calls across the user/kernel boundary. Only the class
+ * declaration lives here; the implementation is in FireWireLivesOHCI.cpp.
+ */
+
+#ifndef FireWireLivesOHCI_h
+#define FireWireLivesOHCI_h
+
+#include <Availability.h>
+#include <DriverKit/IOService.iig>
+#include <DriverKit/IOInterruptDispatchSource.iig>
+#include <DriverKit/IOBufferMemoryDescriptor.iig>
+#include <DriverKit/IOMemoryMap.iig>
+#include <PCIDriverKit/IOPCIDevice.iig>
+
+class FireWireLivesOHCI: public IOService
+{
+public:
+    virtual bool init(void) override;
+    virtual void free(void) override;
+
+    virtual kern_return_t Start(IOService *provider) override;
+    virtual kern_return_t Stop(IOService *provider) override;
+
+    /* The userspace 1394 stack talks to us through this. */
+    virtual kern_return_t NewUserClient(uint32_t type,
+                                        IOUserClient **userClient) override;
+
+    /*
+     * Hardware interrupt callback. OHCI raises this for bus resets, self-ID
+     * completion, and async/isochronous DMA context events.
+     */
+    virtual void InterruptOccurred(OSAction *action,
+                                   uint64_t count,
+                                   uint64_t time)
+        TYPE(IOInterruptDispatchSource::InterruptOccurred);
+
+protected:
+    /* ---- MMIO helpers over BAR0 ---- */
+    kern_return_t RegisterRead(uint32_t offset, uint32_t *value) LOCALONLY;
+    kern_return_t RegisterWrite(uint32_t offset, uint32_t value) LOCALONLY;
+
+    /* ---- Controller bring-up, broken into the steps OHCI 1.1 mandates ---- */
+    kern_return_t ResetController(void) LOCALONLY;
+    kern_return_t EnableLinkPowerStatus(void) LOCALONLY;
+    kern_return_t ConfigureSelfIDBuffer(void) LOCALONLY;
+    kern_return_t EnableLink(void) LOCALONLY;
+
+    /* ---- Bus reset handling ---- */
+    void HandleBusReset(void) LOCALONLY;
+    void HandleSelfIDComplete(void) LOCALONLY;
+
+    /* ---- PHY register access, via the PhyControl register ---- */
+    kern_return_t PhyRead(uint8_t address, uint8_t *value) LOCALONLY;
+    kern_return_t PhyWrite(uint8_t address, uint8_t value) LOCALONLY;
+};
+
+#endif /* FireWireLivesOHCI_h */

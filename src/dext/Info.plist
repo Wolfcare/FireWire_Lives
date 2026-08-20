@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>FireWireLives</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.firewirelives.FireWireLives</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>FireWireLives</string>
+	<key>CFBundlePackageType</key>
+	<string>DEXT</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>OSBundleUsageDescription</key>
+	<string>Provides FireWire (IEEE 1394) support for devices attached via a Thunderbolt to FireWire adapter.</string>
+
+	<key>IOKitPersonalities</key>
+	<dict>
+		<key>FireWireLivesOHCI</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>com.firewirelives.FireWireLives</string>
+			<key>IOClass</key>
+			<string>IOUserService</string>
+			<key>IOUserClass</key>
+			<string>FireWireLivesOHCI</string>
+			<key>IOProviderClass</key>
+			<string>IOPCIDevice</string>
+			<key>IOUserServerName</key>
+			<string>com.firewirelives.FireWireLives</string>
+
+			<!--
+			  Match any 1394 OHCI controller by PCI class code rather than by
+			  vendor/device, so this covers the TI, LSI/Agere, VIA and NEC
+			  parts alike - including whichever one is inside Apple's
+			  Thunderbolt-to-FireWire adapter.
+
+			  0x0c = serial bus controller, 0x00 = FireWire, 0x10 = OHCI
+			  programming interface. The mask leaves the revision byte free.
+			-->
+			<key>IOPCIClassMatch</key>
+			<string>0x0c001000&amp;0xffffff00</string>
+
+			<!-- Probe higher than nothing else, but this is the only claimant
+			     on macOS 26 since Apple's driver is gone. -->
+			<key>IOProbeScore</key>
+			<integer>100000</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

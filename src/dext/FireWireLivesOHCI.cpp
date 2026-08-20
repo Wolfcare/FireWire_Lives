@@ -400,6 +400,33 @@ FireWireLivesOHCI::PublishStatus(void)
     props->release();
 }
 
+kern_return_t
+FireWireLivesOHCI::InitiateBusReset(void)
+{
+    uint8_t phy1 = 0;
+    kern_return_t ret = PhyRead(OHCI_PHY_REG_1, &phy1);
+
+    if (ret != kIOReturnSuccess) {
+        Log("ERROR: could not read PHY register 1: 0x%x", ret);
+        return ret;
+    }
+
+    Log("PHY reg 1 = 0x%02x (gap_count %u)", phy1,
+        phy1 & OHCI_PHY1_GAP_COUNT_MASK);
+
+    /* Setting IBR makes this PHY drive a bus reset, after which every node
+     * broadcasts its self-ID packets and the controller DMAs them into the
+     * self-ID buffer. */
+    ret = PhyWrite(OHCI_PHY_REG_1, (uint8_t)(phy1 | OHCI_PHY1_IBR));
+    if (ret != kIOReturnSuccess) {
+        Log("ERROR: could not write PHY register 1: 0x%x", ret);
+        return ret;
+    }
+
+    Log("bus reset initiated");
+    return kIOReturnSuccess;
+}
+
 /* ------------------------------------------------------------------ */
 /* PHY register access                                                 */
 /* ------------------------------------------------------------------ */
@@ -496,14 +523,18 @@ FireWireLivesOHCI::HandleSelfIDComplete(void)
         return;
     }
 
-    /* Size is a byte count including the header quadlet the controller writes
-     * at the start of the buffer. */
-    uint32_t sizeBytes = (selfIDCount >> OHCI_SelfIDCount_sizeShift) &
-                         OHCI_SelfIDCount_sizeMask;
-    sizeBytes *= 4;
+    /*
+     * selfIDSize counts quadlets in the buffer, including the header quadlet
+     * the controller writes first. The remainder is self-ID packets, each
+     * stored as a value followed by its bitwise inverse - so the count after
+     * the header is always even.
+     */
+    uint32_t quadletCount = (selfIDCount >> OHCI_SelfIDCount_sizeShift) &
+                            OHCI_SelfIDCount_sizeMask;
 
-    if (sizeBytes < 8 || sizeBytes > SELFID_BUFFER_SIZE) {
-        Log("implausible self-ID size %u bytes", sizeBytes);
+    if (quadletCount < 3 ||
+        quadletCount > (SELFID_BUFFER_SIZE / sizeof(uint32_t))) {
+        Log("implausible self-ID quadlet count %u", quadletCount);
         return;
     }
 
@@ -512,7 +543,12 @@ FireWireLivesOHCI::HandleSelfIDComplete(void)
         return;
 
     /* Skip the header quadlet; the rest is quadlet/inverse pairs. */
-    size_t quadlets = (sizeBytes / sizeof(uint32_t)) - 1;
+    size_t quadlets = quadletCount - 1;
+
+    Log("self-ID: %u quadlets total, %zu of packet data, generation %u",
+        quadletCount, quadlets,
+        (selfIDCount >> OHCI_SelfIDCount_generationShift) &
+        OHCI_SelfIDCount_generationMask);
 
     fw_err_t err = fw_selfid_parse(&buffer[1], quadlets, true, &ivars->topology);
     if (err != FW_OK) {
@@ -607,6 +643,67 @@ IMPL(FireWireLivesOHCI, Start)
     PublishStatus();
     RegisterService();
     Log("started");
+
+    /*
+     * Enumerate. Self-ID packets normally arrive via the interrupt handler,
+     * but poll IntEvent as well: if the interrupt is not wired to the index we
+     * registered, polling still proves whether the hardware enumerated, which
+     * separates "the bus did not reset" from "the interrupt never arrived".
+     */
+    InitiateBusReset();
+
+    for (int i = 0; i < 200; i++) {
+        uint32_t selfIDCount = RegisterRead(OHCI_SelfIDCount);
+
+        /* Gate on the self-ID buffer actually being populated rather than on
+         * an interrupt event bit: which event a given chip raises varies, but
+         * data landing in the buffer does not. */
+        if (selfIDCount != OHCI_BAD_READ &&
+            (selfIDCount & OHCI_SelfIDCount_selfIDError) == 0) {
+            uint32_t quadlets = (selfIDCount >> OHCI_SelfIDCount_sizeShift) &
+                                OHCI_SelfIDCount_sizeMask;
+            if (quadlets >= 3) {
+                Log("self-ID data present after %dms (SelfIDCount 0x%08x)",
+                    i * 5, selfIDCount);
+                RegisterWrite(OHCI_IntEventClear,
+                              OHCI_Int_selfIDComplete | OHCI_Int_busReset);
+                ivars->generation++;
+                HandleSelfIDComplete();
+                break;
+            }
+        }
+        IOSleep(5);
+    }
+
+    {
+        /* Record what the hardware ended up reporting either way, so a failed
+         * enumeration is diagnosable from the registry rather than invisible. */
+        uint32_t events   = RegisterRead(OHCI_IntEventSet);
+        uint32_t selfID   = RegisterRead(OHCI_SelfIDCount);
+        uint32_t nodeID   = RegisterRead(OHCI_NodeID);
+        uint32_t linkCtl  = RegisterRead(OHCI_LinkControlSet);
+        uint32_t hcCtl    = RegisterRead(OHCI_HCControlSet);
+
+        Log("post-reset: IntEvent 0x%08x SelfIDCount 0x%08x NodeID 0x%08x "
+            "LinkControl 0x%08x HCControl 0x%08x",
+            events, selfID, nodeID, linkCtl, hcCtl);
+
+        OSDictionary *diag = OSDictionary::withCapacity(8);
+        if (diag) {
+            #define PUT_DIAG(k, v) do {                                   \
+                OSNumber *_n = OSNumber::withNumber((uint64_t)(v), 32);    \
+                if (_n) { diag->setObject(k, _n); _n->release(); }         \
+            } while (0)
+            PUT_DIAG("RawIntEvent",    events);
+            PUT_DIAG("RawSelfIDCount", selfID);
+            PUT_DIAG("RawNodeID",      nodeID);
+            PUT_DIAG("RawLinkControl", linkCtl);
+            PUT_DIAG("RawHCControl",   hcCtl);
+            #undef PUT_DIAG
+            SetProperties(diag);
+            diag->release();
+        }
+    }
     return kIOReturnSuccess;
 
 fail:

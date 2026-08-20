@@ -177,6 +177,12 @@ extern "C" {
 #define OHCI_PhyControl_WriteDone       (1u << 14)
 #define OHCI_PhyControl_ReadDataShift   16
 
+/* ---- PHY registers (accessed through PhyControl) ---- */
+#define OHCI_PHY_REG_1                  1
+#define OHCI_PHY1_IBR                   (1u << 6)   /* initiate bus reset */
+#define OHCI_PHY1_RHB                   (1u << 7)   /* root hold-off */
+#define OHCI_PHY1_GAP_COUNT_MASK        0x3fu
+
 /* ---- NodeID ---- */
 #define OHCI_NodeID_nodeNumberMask      0x3fu
 #define OHCI_NodeID_busNumberShift      6
@@ -187,8 +193,17 @@ extern "C" {
 
 /* ---- SelfIDCount ---- */
 #define OHCI_SelfIDCount_selfIDError    (1u << 31)
-#define OHCI_SelfIDCount_sizeShift      3
-#define OHCI_SelfIDCount_sizeMask       0xffu   /* size in quadlets */
+/*
+ * selfIDSize occupies bits [10:2] and counts QUADLETS written into the self-ID
+ * buffer, including the one-quadlet header the controller writes first.
+ *
+ * Verified against real hardware: an LSI FW643 with two nodes on the bus
+ * reported 0x00020014, i.e. 5 quadlets = header + 2 self-ID packets of 2
+ * quadlets each (value followed by its inverse). Reading this field as [10:3]
+ * yields 2, which then computes an odd quadlet count and fails to parse.
+ */
+#define OHCI_SelfIDCount_sizeShift      2
+#define OHCI_SelfIDCount_sizeMask       0x1ffu  /* quadlets, including header */
 #define OHCI_SelfIDCount_generationShift 16
 #define OHCI_SelfIDCount_generationMask 0xffu
 

@@ -72,3 +72,29 @@ has been authorised in System Settings.
 Verify it enumerated with `make probe`. What you want to see is a device with
 class code `0x0c0010` and **no driver attached** — unclaimed, and therefore
 available for our dext to match.
+
+## The development loop
+
+Reloading a changed dext takes more than reinstalling it:
+
+```
+1. bump CFBundleVersion in src/dext/Info.plist   # or macOS keeps the old binary
+2. ./scripts/build-app.sh
+3. build/FireWireLivesInstaller.app/Contents/MacOS/FireWireLivesInstaller
+4. physically unplug and replug the Thunderbolt adapter
+```
+
+Step 4 is not optional, and it is the step that wastes the most time when
+forgotten. A running dext process cannot be killed without root
+(`kill` returns "operation not permitted"), and `systemextensionsctl reset`
+clears the database without terminating the live process. That process keeps
+ownership of the PCI device, so the newly staged version reports
+`[activated enabled]` while never actually starting - and every property you
+read afterwards comes from the stale driver.
+
+Replugging makes the PCI device disappear, which tears down the old driver and
+lets the new one match on re-enumeration. It also generates a genuine bus
+reset, which is what you want for testing anyway.
+
+Symptom to watch for: `ps -Ao pid,lstart -o comm | grep FireWireLives` showing
+a start time older than your most recent install.

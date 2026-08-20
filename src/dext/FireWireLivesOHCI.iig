@@ -55,6 +55,15 @@ public:
     kern_return_t EnableLink(void) LOCALONLY;
 
     /*
+     * Force the bus to enumerate.
+     *
+     * Enabling the link is not enough: until some node initiates a reset, no
+     * self-ID packets are broadcast and the topology stays unknown. A freshly
+     * started driver has to ask for one.
+     */
+    kern_return_t InitiateBusReset(void) LOCALONLY;
+
+    /*
      * Publish bring-up results into the IORegistry.
      *
      * DriverKit os_log output is not reliably retrievable after the fact, so

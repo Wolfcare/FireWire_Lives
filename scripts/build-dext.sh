@@ -46,7 +46,7 @@ clang++ $CXXFLAGS -c src/dext/FireWireLivesOHCI.cpp -o "$OUT/driver.o"
 
 echo "==> compiling portable core"
 CORE_OBJS=""
-for f in fw_crc fw_selfid fw_configrom fw_packet fw_transaction fw_sbp2; do
+for f in fw_crc fw_selfid fw_configrom fw_packet fw_transaction fw_sbp2 ohci_desc; do
     clang $CFLAGS -c "src/core/$f.c" -o "$OUT/$f.o"
     CORE_OBJS="$CORE_OBJS $OUT/$f.o"
 done

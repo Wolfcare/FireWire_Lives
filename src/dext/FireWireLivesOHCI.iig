@@ -73,6 +73,16 @@ public:
      */
     void PublishStatus(void) LOCALONLY;
 
+    /* Allocate and DMA-map the descriptor rings and packet buffers. */
+    kern_return_t SetupAsyncContexts(void) LOCALONLY;
+
+    /*
+     * Send one quadlet read to node 0's config ROM and report what the bus
+     * said. The ack code alone is informative: ack_pending means the far-end
+     * device accepted the request and a split response is coming.
+     */
+    kern_return_t ProbeNode0(void) LOCALONLY;
+
     /* ---- Bus reset handling ---- */
     void HandleBusReset(void) LOCALONLY;
     void HandleSelfIDComplete(void) LOCALONLY;

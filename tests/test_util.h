@@ -67,5 +67,6 @@ void test_configrom(void);
 void test_packet(void);
 void test_transaction(void);
 void test_sbp2(void);
+void test_ohci_desc(void);
 
 #endif /* TEST_UTIL_H */

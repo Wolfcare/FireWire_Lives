@@ -31,6 +31,8 @@
 
 #include "fw/ohci_regs.h"
 #include "fw/fw_selfid.h"
+#include "fw/ohci_desc.h"
+#include "fw/fw_packet.h"
 
 #define Log(fmt, ...) os_log(OS_LOG_DEFAULT, "FireWireLives: " fmt, ##__VA_ARGS__)
 
@@ -68,6 +70,21 @@ struct FireWireLivesOHCI_IVars
     IODMACommand              *selfIDDMACommand;
     uint64_t                   selfIDDeviceAddress;  /* IOVA, not physical */
     void                      *selfIDVirtualAddress;
+
+    /*
+     * One DART page carved into the pieces the async contexts need. A single
+     * mapping keeps everything inside one 16 KB mapper page and one IOVA
+     * range, which matters because OHCI addresses DMA with 32-bit registers.
+     */
+    IOBufferMemoryDescriptor  *asyncBuffer;
+    IODMACommand              *asyncDMACommand;
+    uint64_t                   asyncDeviceAddress;
+    uint8_t                   *asyncVirtualAddress;
+
+    /* Results of the node 0 probe, published to the registry. */
+    uint32_t                   probeAck;
+    uint32_t                   probeContextControl;
+    bool                       probeAttempted;
 
     fw_topology_t              topology;
     uint32_t                   ohciVersion;
@@ -392,6 +409,11 @@ FireWireLivesOHCI::PublishStatus(void)
     props->setObject("GapCountConsistent",
                      ivars->topology.gap_count_consistent ? kOSBooleanTrue
                                                           : kOSBooleanFalse);
+    PUT_NUM("ProbeAckRaw",        ivars->probeAck, 32);
+    PUT_NUM("ProbeAckCode",       ivars->probeAck & 0x1f, 32);
+    PUT_NUM("ProbeContextControl", ivars->probeContextControl, 32);
+    props->setObject("ProbeAttempted",
+                     ivars->probeAttempted ? kOSBooleanTrue : kOSBooleanFalse);
     props->setObject("DMAMappedThroughDART",
                      ivars->selfIDDeviceAddress ? kOSBooleanTrue
                                                 : kOSBooleanFalse);
@@ -450,6 +472,176 @@ FireWireLivesOHCI::InitiateBusReset(void)
     }
 
     Log("bus reset initiated");
+    return kIOReturnSuccess;
+}
+
+/* ------------------------------------------------------------------ */
+/* Async contexts                                                      */
+/* ------------------------------------------------------------------ */
+
+/* Layout within the single DMA page. Everything is 16-byte aligned because
+ * descriptor block addresses carry their Z value in the low four bits. */
+#define ASYNC_BUFFER_SIZE     16384
+#define AT_DESCRIPTOR_OFFSET  0      /* transmit descriptor block */
+#define AR_DESCRIPTOR_OFFSET  256    /* receive descriptor block */
+#define AR_BUFFER_OFFSET      512    /* where responses land */
+#define AR_BUFFER_SIZE        4096
+
+kern_return_t
+FireWireLivesOHCI::SetupAsyncContexts(void)
+{
+    kern_return_t ret;
+
+    ret = IOBufferMemoryDescriptor::Create(kIOMemoryDirectionInOut,
+                                           ASYNC_BUFFER_SIZE,
+                                           ASYNC_BUFFER_SIZE,
+                                           &ivars->asyncBuffer);
+    if (ret != kIOReturnSuccess) {
+        Log("ERROR: async buffer allocation failed: 0x%x", ret);
+        return ret;
+    }
+
+    IODMACommandSpecification spec = {};
+    spec.options        = kIODMACommandSpecificationNoOptions;
+    spec.maxAddressBits = 32;   /* OHCI descriptor addresses are 32-bit */
+
+    ret = IODMACommand::Create(ivars->pciDevice,
+                               kIODMACommandCreateNoOptions,
+                               &spec, &ivars->asyncDMACommand);
+    if (ret != kIOReturnSuccess) {
+        Log("ERROR: async IODMACommand::Create failed: 0x%x", ret);
+        return ret;
+    }
+
+    uint64_t         flags = 0;
+    uint32_t         segments = 1;
+    IOAddressSegment seg[32] = {};
+
+    ret = ivars->asyncDMACommand->PrepareForDMA(
+              kIODMACommandPrepareForDMANoOptions,
+              ivars->asyncBuffer, 0, ASYNC_BUFFER_SIZE,
+              &flags, &segments, seg);
+    if (ret != kIOReturnSuccess) {
+        Log("ERROR: async PrepareForDMA failed: 0x%x", ret);
+        return ret;
+    }
+
+    /* The descriptor blocks and the buffers they point at must all be
+     * reachable from one contiguous IOVA range. */
+    if (segments != 1) {
+        Log("ERROR: async buffer scattered across %u segments", segments);
+        return kIOReturnNoResources;
+    }
+
+    ivars->asyncDeviceAddress = seg[0].address;
+    if (ivars->asyncDeviceAddress > 0xffffffffull) {
+        Log("ERROR: async IOVA 0x%llx exceeds 32 bits",
+            ivars->asyncDeviceAddress);
+        return kIOReturnNoResources;
+    }
+
+    IOAddressSegment virt = {};
+    ivars->asyncBuffer->GetAddressRange(&virt);
+    ivars->asyncVirtualAddress = (uint8_t *)virt.address;
+
+    Log("async buffer: IOVA 0x%llx, %u bytes",
+        ivars->asyncDeviceAddress, (unsigned)ASYNC_BUFFER_SIZE);
+
+    return kIOReturnSuccess;
+}
+
+kern_return_t
+FireWireLivesOHCI::ProbeNode0(void)
+{
+    if (ivars->asyncVirtualAddress == nullptr)
+        return kIOReturnNotReady;
+    if (ivars->topology.node_count < 2) {
+        Log("probe skipped: only %u node(s) on the bus",
+            ivars->topology.node_count);
+        return kIOReturnNoDevice;
+    }
+
+    ivars->probeAttempted = true;
+
+    /*
+     * Build a quadlet read of node 0's config ROM header. Node IDs are
+     * bus 0x3ff (this bus) plus the phy_id, so node 0 is 0xffc0.
+     */
+    fw_packet_header_t hdr = {};
+    hdr.tcode       = FW_TCODE_READ_QUADLET_REQUEST;
+    hdr.tlabel      = 1;
+    hdr.retry       = 1;
+    hdr.destination = 0xffc0;
+    hdr.source      = ivars->localNodeID;
+    hdr.offset      = FW_CONFIG_ROM_BASE;
+
+    fw_quadlet_t header[FW_MAX_HEADER_QUADLETS];
+    int hq = fw_packet_encode_header(&hdr, header, FW_MAX_HEADER_QUADLETS);
+    if (hq < 0) {
+        Log("ERROR: header encode failed: %d", hq);
+        return kIOReturnInternalError;
+    }
+
+    /* --- receive side first, so the response has somewhere to land --- */
+    uint8_t *arDesc = ivars->asyncVirtualAddress + AR_DESCRIPTOR_OFFSET;
+    uint32_t arDescIOVA = (uint32_t)(ivars->asyncDeviceAddress + AR_DESCRIPTOR_OFFSET);
+    uint32_t arBufIOVA  = (uint32_t)(ivars->asyncDeviceAddress + AR_BUFFER_OFFSET);
+
+    memset(ivars->asyncVirtualAddress + AR_BUFFER_OFFSET, 0, AR_BUFFER_SIZE);
+
+    int arz = ohci_build_ar_buffer(arBufIOVA, AR_BUFFER_SIZE, 0,
+                                   arDesc, 256);
+    if (arz < 0) {
+        Log("ERROR: AR descriptor build failed: %d", arz);
+        return kIOReturnInternalError;
+    }
+
+    uint32_t arBase = OHCI_AsyncRspRcvContextBase;
+    RegisterWrite(arBase + OHCI_ContextControlClear, 0xffffffff);
+    RegisterWrite(arBase + OHCI_CommandPtr, ohci_command_ptr(arDescIOVA, arz));
+    RegisterWrite(arBase + OHCI_ContextControlSet, OHCI_ContextControl_run);
+
+    /* --- transmit side --- */
+    uint8_t *atDesc = ivars->asyncVirtualAddress + AT_DESCRIPTOR_OFFSET;
+    uint32_t atDescIOVA = (uint32_t)(ivars->asyncDeviceAddress + AT_DESCRIPTOR_OFFSET);
+
+    int z = ohci_build_at_request(header, (size_t)hq, 0, 0, atDesc, 256);
+    if (z < 0) {
+        Log("ERROR: AT descriptor build failed: %d", z);
+        return kIOReturnInternalError;
+    }
+
+    Log("probing node 0: tcode %u, offset 0x%llx, Z=%d, descriptor IOVA 0x%x",
+        hdr.tcode, (unsigned long long)hdr.offset, z, atDescIOVA);
+
+    uint32_t atBase = OHCI_AsyncReqTrContextBase;
+    RegisterWrite(atBase + OHCI_ContextControlClear, 0xffffffff);
+    RegisterWrite(atBase + OHCI_CommandPtr, ohci_command_ptr(atDescIOVA, z));
+    RegisterWrite(atBase + OHCI_ContextControlSet, OHCI_ContextControl_run);
+
+    /* Wait for the controller to write a completion status into the
+     * descriptor. A quadlet read on a healthy bus answers in microseconds. */
+    for (int i = 0; i < 100; i++) {
+        if (ohci_desc_is_complete(atDesc))
+            break;
+        IOSleep(1);
+    }
+
+    uint16_t xfer = ohci_desc_xfer_status(atDesc);
+    uint8_t  ack  = (uint8_t)(xfer & 0x1f);
+    uint32_t ctl  = RegisterRead(atBase + OHCI_ContextControlSet);
+
+    ivars->probeAck = xfer;
+    ivars->probeContextControl = ctl;
+
+    Log("AT status 0x%04x, ack %u (%s), ContextControl 0x%08x",
+        xfer, ack, ohci_event_name(ack), ctl);
+
+    if (ohci_ack_is_success(ack))
+        Log("node 0 ACCEPTED the request - the far-end device is talking to us");
+    else
+        Log("node 0 did not accept: %s", ohci_event_name(ack));
+
     return kIOReturnSuccess;
 }
 
@@ -663,6 +855,7 @@ IMPL(FireWireLivesOHCI, Start)
     if ((ret = ResetController())       != kIOReturnSuccess) goto fail;
     if ((ret = EnableLinkPowerStatus()) != kIOReturnSuccess) goto fail;
     if ((ret = ConfigureSelfIDBuffer()) != kIOReturnSuccess) goto fail;
+    if ((ret = SetupAsyncContexts())    != kIOReturnSuccess) goto fail;
     if ((ret = SetupInterrupts())       != kIOReturnSuccess) goto fail;
     if ((ret = EnableLink())            != kIOReturnSuccess) goto fail;
 
@@ -695,6 +888,8 @@ IMPL(FireWireLivesOHCI, Start)
                               OHCI_Int_selfIDComplete | OHCI_Int_busReset);
                 ivars->generation++;
                 HandleSelfIDComplete();
+                ProbeNode0();
+                PublishStatus();
                 break;
             }
         }
@@ -757,6 +952,10 @@ IMPL(FireWireLivesOHCI, Stop)
     OSSafeReleaseNULL(ivars->interruptAction);
     OSSafeReleaseNULL(ivars->interruptSource);
     OSSafeReleaseNULL(ivars->workQueue);
+    if (ivars->asyncDMACommand)
+        ivars->asyncDMACommand->CompleteDMA(kIODMACommandCompleteDMANoOptions);
+    OSSafeReleaseNULL(ivars->asyncDMACommand);
+    OSSafeReleaseNULL(ivars->asyncBuffer);
     OSSafeReleaseNULL(ivars->selfIDDMACommand);
     OSSafeReleaseNULL(ivars->selfIDBuffer);
     OSSafeReleaseNULL(ivars->barMap);

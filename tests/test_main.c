@@ -15,6 +15,7 @@ int main(void)
     test_selfid();
     test_configrom();
     test_sbp2();
+    test_ohci_desc();
 
     printf("\n==============================\n");
     if (g_tests_failed == 0)

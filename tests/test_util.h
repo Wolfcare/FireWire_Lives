@@ -65,5 +65,6 @@ void test_crc(void);
 void test_selfid(void);
 void test_configrom(void);
 void test_packet(void);
+void test_transaction(void);
 
 #endif /* TEST_UTIL_H */

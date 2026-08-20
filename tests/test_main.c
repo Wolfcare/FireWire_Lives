@@ -11,6 +11,7 @@ int main(void)
 
     test_crc();
     test_packet();
+    test_transaction();
     test_selfid();
     test_configrom();
 

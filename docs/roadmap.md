@@ -57,12 +57,17 @@ The milestone is done when `fwprobe` reports a real device's GUID and vendor
 string, read off an actual FireWire bus. See `docs/test-hardware.md` for the
 specific hardware and the per-milestone acceptance criteria.
 
-## M3 — transaction layer
+## M3 — transaction layer 🚧 partly done
+
+The hardware-independent half is complete and tested; the DMA half needs the
+dext.
 
 - [ ] AT/AR DMA contexts, descriptor rings
-- [ ] Async read/write/lock with tlabel allocation and timeout
-- [ ] Split transactions
-- [ ] Generation-guarded retry (see the bus-reset invariant)
+- [x] Async request tracking with round-robin tlabel allocation
+- [x] Split-transaction timeout and expiry
+- [x] Response matching, validated against responder node, target node and
+      expected response tcode
+- [x] Generation-guarded abort on bus reset (see the bus-reset invariant)
 - [ ] Config ROM readout for every discovered node
 - [ ] IOUserClient API, so userspace can issue transactions
 

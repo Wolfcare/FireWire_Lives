@@ -85,6 +85,131 @@ static bool has_driver_attached(io_registry_entry_t entry)
     return found;
 }
 
+
+/* Read a boolean IORegistry property. */
+static bool io_prop_bool(io_registry_entry_t entry, const char *key)
+{
+    CFStringRef cfkey = CFStringCreateWithCString(kCFAllocatorDefault, key,
+                                                  kCFStringEncodingUTF8);
+    CFTypeRef ref = IORegistryEntryCreateCFProperty(entry, cfkey,
+                                                    kCFAllocatorDefault, 0);
+    CFRelease(cfkey);
+
+    bool value = false;
+    if (ref) {
+        if (CFGetTypeID(ref) == CFBooleanGetTypeID())
+            value = CFBooleanGetValue((CFBooleanRef)ref);
+        CFRelease(ref);
+    }
+    return value;
+}
+
+/* True if the property exists at all, whatever its type. */
+static bool io_prop_exists(io_registry_entry_t entry, const char *key)
+{
+    CFStringRef cfkey = CFStringCreateWithCString(kCFAllocatorDefault, key,
+                                                  kCFStringEncodingUTF8);
+    CFTypeRef ref = IORegistryEntryCreateCFProperty(entry, cfkey,
+                                                    kCFAllocatorDefault, 0);
+    CFRelease(cfkey);
+
+    bool present = (ref != NULL);
+    if (ref)
+        CFRelease(ref);
+    return present;
+}
+
+/*
+ * Decode BAR0 from the "assigned-addresses" property.
+ *
+ * This is the OpenFirmware PCI binding: five 32-bit cells per BAR, laid out as
+ * phys.hi, address low, address high, size low, size high. It is preferred
+ * over IODeviceMemory because that property is an array of IOMemoryDescriptor
+ * objects which do not serialise to a CFDictionary through the CF property
+ * API, even though ioreg renders them as one.
+ *
+ * phys.hi packs the space code, bus, device/function and the config-space
+ * register offset of the BAR (0x10 = BAR0).
+ */
+static bool io_bar0(io_registry_entry_t entry, uint64_t *address,
+                    uint64_t *length, uint8_t *bar_offset)
+{
+    CFTypeRef ref = IORegistryEntryCreateCFProperty(
+        entry, CFSTR("assigned-addresses"), kCFAllocatorDefault, 0);
+    if (ref == NULL)
+        return false;
+
+    bool found = false;
+
+    if (CFGetTypeID(ref) == CFDataGetTypeID()) {
+        CFIndex len = CFDataGetLength((CFDataRef)ref);
+        const UInt8 *bytes = CFDataGetBytePtr((CFDataRef)ref);
+
+        /* Each entry is 5 cells of 4 bytes. Walk them and take the first
+         * memory-space BAR. */
+        for (CFIndex off = 0; off + 20 <= len; off += 20) {
+            uint32_t cell[5];
+            for (int c = 0; c < 5; c++) {
+                const UInt8 *p = bytes + off + (c * 4);
+                cell[c] = (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+                          ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+            }
+
+            uint32_t space = (cell[0] >> 24) & 0x3u;
+            if (space != 2 && space != 3)   /* 2 = 32-bit mem, 3 = 64-bit mem */
+                continue;
+
+            *address     = ((uint64_t)cell[2] << 32) | cell[1];
+            *length      = ((uint64_t)cell[4] << 32) | cell[3];
+            *bar_offset  = (uint8_t)(cell[0] & 0xffu);
+            found = true;
+            break;
+        }
+    }
+
+    CFRelease(ref);
+    return found;
+}
+
+/* Print the entitlements macOS says a driver must hold to claim this device. */
+static void print_required_entitlements(io_registry_entry_t entry)
+{
+    CFTypeRef ref = IORegistryEntryCreateCFProperty(
+        entry, CFSTR("IOServiceDEXTEntitlements"), kCFAllocatorDefault, 0);
+    if (ref == NULL)
+        return;
+
+    if (CFGetTypeID(ref) == CFArrayGetTypeID()) {
+        CFIndex outer = CFArrayGetCount((CFArrayRef)ref);
+        for (CFIndex i = 0; i < outer; i++) {
+            CFTypeRef inner = CFArrayGetValueAtIndex((CFArrayRef)ref, i);
+            if (inner == NULL)
+                continue;
+
+            /* Entries are either a string or an array of strings. */
+            if (CFGetTypeID(inner) == CFStringGetTypeID()) {
+                char buf[256];
+                if (CFStringGetCString((CFStringRef)inner, buf, sizeof(buf),
+                                       kCFStringEncodingUTF8))
+                    printf("      %s\n", buf);
+            } else if (CFGetTypeID(inner) == CFArrayGetTypeID()) {
+                CFIndex n = CFArrayGetCount((CFArrayRef)inner);
+                for (CFIndex j = 0; j < n; j++) {
+                    CFStringRef s = (CFStringRef)CFArrayGetValueAtIndex(
+                        (CFArrayRef)inner, j);
+                    char buf[256];
+                    if (s && CFGetTypeID(s) == CFStringGetTypeID() &&
+                        CFStringGetCString(s, buf, sizeof(buf),
+                                           kCFStringEncodingUTF8))
+                        printf("      %s\n", buf);
+                }
+            }
+        }
+    }
+
+    CFRelease(ref);
+}
+
 static void describe_ohci(io_registry_entry_t entry, uint32_t class_code)
 {
     char name[128];
@@ -118,8 +243,45 @@ static void describe_ohci(io_registry_entry_t entry, uint32_t class_code)
     printf("    driver attached : %s\n",
            claimed ? "yes" : "\033[33mNO - unclaimed, available to our dext\033[0m");
 
-    printf("\n    This is the device FireWireLives.dext must match. Add to its\n");
-    printf("    IOKitPersonalities:  IOPCIClassMatch = \"0x0c001000&0xffffff00\"\n");
+    printf("    tunnelled       : %s\n",
+           io_prop_bool(entry, "IOPCITunnelled") ? "yes (behind Thunderbolt)" : "no");
+
+    /* BAR0 is the OHCI register file. The dext maps this and every register
+     * access in ohci_regs.h is an offset into it. */
+    uint64_t bar_addr = 0, bar_len = 0;
+    uint8_t  bar_off = 0;
+    if (io_bar0(entry, &bar_addr, &bar_len, &bar_off)) {
+        printf("    BAR%d (cfg 0x%02x) : bus address 0x%llx, %llu bytes\n",
+               (bar_off - 0x10) / 4, bar_off, bar_addr, bar_len);
+
+        /* The register file runs to 0x400 + 32 iso contexts * 0x20 = 0x800. */
+        if (bar_len < 0x800)
+            printf("      \033[31mWARNING: smaller than the 0x800 OHCI register file\033[0m\n");
+        else
+            printf("      large enough for the full OHCI register file (needs 0x800)\n");
+    } else {
+        printf("    BAR0            : not reported\n");
+    }
+
+    /*
+     * DMA is the part of this project most likely to be hard. On Apple
+     * Silicon the controller reaches memory through the DART IOMMU, and OHCI's
+     * DMA address registers are only 32 bits wide, so every mapping must be
+     * both DART-translated and constrained to the low 4GB.
+     */
+    bool dart = io_prop_exists(entry, "iommu-parent");
+    uint32_t page_size = io_prop_u32(entry, "IOPCIDeviceMapperPageSize", 0);
+    printf("    IOMMU           : %s\n",
+           dart ? "\033[33mDART present - DMA needs IOVAs, not physical addresses\033[0m"
+                : "none reported");
+    if (page_size)
+        printf("    mapper page size: %u bytes\n", page_size);
+
+    printf("\n    macOS says a driver must hold these entitlements to claim it:\n");
+    print_required_entitlements(entry);
+
+    printf("\n    Matches our Info.plist personality:\n");
+    printf("      IOPCIClassMatch = \"0x0c001000&0xffffff00\"\n");
 }
 
 int main(void)

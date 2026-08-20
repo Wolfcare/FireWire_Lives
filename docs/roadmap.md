@@ -23,13 +23,34 @@ No hardware and no DriverKit SDK required.
 
 ## M2 — controller bring-up 🚧 blocked on Xcode
 
+Hardware validated 2026-08-20 with the Apple Thunderbolt-to-FireWire adapter
+attached. The controller enumerates and is unclaimed:
+
+| | |
+|---|---|
+| Controller | LSI / Agere `11c1:5901` rev 08 (FW643 family), at PCI 3:0:0 |
+| Class code | `0x0c0010` — matches our `IOPCIClassMatch` |
+| Driver attached | **none** — macOS 26 leaves it entirely unclaimed |
+| BAR0 | 4096 bytes, 32-bit memory space (register file needs `0x800`) |
+| Transport | Thunderbolt-tunnelled (`IOPCITunnelled = Yes`) |
+| IOMMU | **DART present**, mapper page size 16384 |
+| Required entitlement | macOS itself reports `com.apple.developer.driverkit.transport.pci` |
+
+That last row is the important one: the OS states the entitlement a driver must
+hold to claim this device, and it is exactly the one in our
+`FireWireLives.entitlements`. The architecture is confirmed against real
+hardware rather than inferred.
+
 - [ ] Install Xcode, get the DriverKit SDK
 - [ ] Compile the dext for the first time
 - [ ] Match the OHCI controller and open the PCI device
 - [ ] Map BAR0, read `Version` — the first proof of life
 - [ ] Soft reset, LPS, link enable
 - [ ] **Resolve DMA under the DART IOMMU with 32-bit addressing** — the
-      biggest technical risk in the project; see `docs/architecture.md`
+      biggest technical risk in the project, now confirmed present on the
+      real adapter; see `docs/architecture.md`. Note the DART maps at 16 KB
+      granularity while the self-ID buffer only needs 2 KB alignment, so a
+      whole mapper page is the practical minimum allocation.
 - [ ] Self-ID buffer DMA, and a first real bus enumeration
 
 The milestone is done when `fwprobe` reports a real device's GUID and vendor
@@ -87,8 +108,8 @@ genuinely good rather than merely functional.
 
 | Risk | Severity | Notes |
 |---|---|---|
-| DART IOMMU vs. OHCI's 32-bit DMA addressing | **High** | Blocks everything from M2 onward. Validate first. |
+| DART IOMMU vs. OHCI's 32-bit DMA addressing | **High** | Confirmed present on the real adapter (16 KB mapper pages). Blocks everything from M2 onward. Validate first. |
 | PCIDriverKit may not expose enough DMA control | **High** | If so, the project may need a different transport strategy entirely. |
 | Isochronous timing from userspace | Medium | Audio latency and DV frame integrity both depend on it. |
 | `transport.pci` entitlement for distribution | Low | Only affects shipping to others, not local development. |
-| Thunderbolt adapter enumeration on Apple Silicon | Medium | Unverified until hardware is attached. |
+| ~~Thunderbolt adapter enumeration on Apple Silicon~~ | **Resolved** | Verified 2026-08-20: enumerates as an unclaimed `0x0c0010` PCI device. |

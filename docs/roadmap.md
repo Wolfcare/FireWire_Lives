@@ -71,14 +71,18 @@ dext.
 - [ ] Config ROM readout for every discovered node
 - [ ] IOUserClient API, so userspace can issue transactions
 
-## M4 — storage (SBP-2)
+## M4 — storage (SBP-2) 🚧 wire format done
 
 Chosen first of the three protocols because it needs only async transactions —
-no isochronous work — so it validates M3 end to end.
+no isochronous work — so it validates M3 end to end. The protocol encoding is
+complete and tested; driving it needs the transport underneath.
 
-- [ ] Login/reconnect/logout against the management agent
-- [ ] ORB construction and the fetch agent
-- [ ] SCSI command block encapsulation
+- [x] Management ORB encoding (LOGIN / LOGOUT / RECONNECT and friends)
+- [x] Login response parsing, including the command block agent address
+- [x] Command ORB encoding with inline CDB, direction and page-table flags
+- [x] Status block parsing with sense data, bounds-clamped
+- [ ] Drive the login handshake over a real transaction layer
+- [ ] Fetch agent: doorbell, ORB pointer, agent reset
 - [ ] Bridge to IOStorage so a disk actually mounts in Finder
 
 ## M5 — isochronous

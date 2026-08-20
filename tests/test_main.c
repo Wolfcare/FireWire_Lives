@@ -14,6 +14,7 @@ int main(void)
     test_transaction();
     test_selfid();
     test_configrom();
+    test_sbp2();
 
     printf("\n==============================\n");
     if (g_tests_failed == 0)

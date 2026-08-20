@@ -21,7 +21,7 @@ No hardware and no DriverKit SDK required.
 - [x] `fwprobe` hardware survey tool
 - [x] Bounds-safety under ASan/UBSan against truncated and hostile ROMs
 
-## M2 — controller bring-up 🚧 builds; not yet loaded
+## M2 — controller bring-up ✅ done
 
 Hardware validated 2026-08-20 with the Apple Thunderbolt-to-FireWire adapter
 attached. The controller enumerates and is unclaimed:
@@ -49,15 +49,14 @@ hardware rather than inferred.
 - [x] **Driver loads and claims the controller** — `FireWireLivesOHCI` appears in
       the IORegistry as a registered, matched, active child of the PCI device
 - [x] Match the OHCI controller and open the PCI device
-- [ ] Map BAR0, read `Version` — the first proof of life
-- [ ] Soft reset, LPS, link enable
-- [ ] **Resolve DMA under the DART IOMMU with 32-bit addressing.** Risk
-      downgraded: `IODMACommandSpecification` exposes `maxAddressBits`, so the
-      32-bit constraint OHCI needs is expressible in supported API, and
-      `PrepareForDMA` returns the IOVA segments to hand the controller. The
-      code is written; whether the DART honours it in practice is unproven
-      until the driver loads.
-- [ ] Self-ID buffer DMA, and a first real bus enumeration
+- [x] Map BAR0, read `Version` — OHCI 1.1 (`0x00010010`), GUID `0x000a270200754845` (Apple OUI)
+- [x] Soft reset, LPS, link enable — `HCControl 0x008a0000`, `LinkControl 0x00000600`
+- [x] **DMA under the DART IOMMU with 32-bit addressing — resolved.** The
+      self-ID buffer maps to IOVA `0x80000000`, inside the 32-bit window
+      OHCI's address registers require. `IODMACommandSpecification.maxAddressBits
+      = 32` is honoured in practice, not just in the header.
+- [x] Self-ID buffer DMA, and a first real bus enumeration — **2 nodes**,
+      we are root at node 1, gap counts consistent, generation 7
 
 The milestone is done when `fwprobe` reports a real device's GUID and vendor
 string, read off an actual FireWire bus. See `docs/test-hardware.md` for the
@@ -124,8 +123,8 @@ genuinely good rather than merely functional.
 
 | Risk | Severity | Notes |
 |---|---|---|
-| DART IOMMU vs. OHCI's 32-bit DMA addressing | **High** | Confirmed present on the real adapter (16 KB mapper pages). Blocks everything from M2 onward. Validate first. |
-| PCIDriverKit may not expose enough DMA control | **High** | If so, the project may need a different transport strategy entirely. |
+| ~~DART IOMMU vs. OHCI's 32-bit DMA addressing~~ | **Resolved** | Self-ID buffer maps to IOVA `0x80000000`; `maxAddressBits = 32` honoured. |
+| ~~PCIDriverKit may not expose enough DMA control~~ | **Resolved** | `IODMACommand` + `IODMACommandSpecification` are sufficient for OHCI. |
 | Isochronous timing from userspace | Medium | Audio latency and DV frame integrity both depend on it. |
 | `transport.pci` entitlement for distribution | Low | Only affects shipping to others, not local development. |
 | ~~Thunderbolt adapter enumeration on Apple Silicon~~ | **Resolved** | Verified 2026-08-20: enumerates as an unclaimed `0x0c0010` PCI device. |

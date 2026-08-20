@@ -13,6 +13,7 @@
  */
 
 #include <DriverKit/IOLib.h>
+#include <stdio.h>
 #include <DriverKit/IOService.h>
 #include <DriverKit/IOInterruptDispatchSource.h>
 #include <DriverKit/IOBufferMemoryDescriptor.h>
@@ -394,6 +395,31 @@ FireWireLivesOHCI::PublishStatus(void)
     props->setObject("DMAMappedThroughDART",
                      ivars->selfIDDeviceAddress ? kOSBooleanTrue
                                                 : kOSBooleanFalse);
+
+    /*
+     * Per-node detail from the decoded topology. This is what identifies the
+     * device on the other end of the cable before we can read its config ROM:
+     * its maximum speed, whether it has an active link layer (a PHY-only
+     * repeater does not), and where it sits in the tree.
+     */
+    for (uint8_t i = 0; i < ivars->topology.node_count && i < 8; i++) {
+        const fw_node_t *n = &ivars->topology.node[i];
+        char key[32];
+
+        snprintf(key, sizeof(key), "Node%u_Speed", i);
+        PUT_NUM(key, n->speed, 32);
+        snprintf(key, sizeof(key), "Node%u_Ports", i);
+        PUT_NUM(key, n->port_count, 32);
+        snprintf(key, sizeof(key), "Node%u_HopsFromRoot", i);
+        PUT_NUM(key, n->hop_count, 32);
+        snprintf(key, sizeof(key), "Node%u_Parent", i);
+        PUT_NUM(key, n->parent, 32);
+
+        snprintf(key, sizeof(key), "Node%u_LinkActive", i);
+        props->setObject(key, n->link_active ? kOSBooleanTrue : kOSBooleanFalse);
+        snprintf(key, sizeof(key), "Node%u_Contender", i);
+        props->setObject(key, n->contender ? kOSBooleanTrue : kOSBooleanFalse);
+    }
     #undef PUT_NUM
 
     SetProperties(props);

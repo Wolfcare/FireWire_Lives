@@ -93,6 +93,9 @@ struct FireWireLivesOHCI_IVars
     uint32_t                   selfIDHandledCount;
     uint32_t                   probeSkipReason;
     uint32_t                   probeAck;
+    uint32_t                   probeSpeedAck[4];
+    uint32_t                   probeRetries;
+    uint8_t                    probeSpeed;
     uint32_t                   probeContextControl;
     bool                       probeAttempted;
 
@@ -427,6 +430,8 @@ FireWireLivesOHCI::PublishStatus(void)
                      ivars->asyncVirtualAddress ? kOSBooleanTrue
                                                 : kOSBooleanFalse);
     PUT_NUM("ProbeAckRaw",        ivars->probeAck, 32);
+    PUT_NUM("ProbeSpeedWorked",   ivars->probeSpeed, 32);
+    PUT_NUM("ProbeRetries",       ivars->probeRetries, 32);
     PUT_NUM("ProbeAckCode",       ivars->probeAck & 0x1f, 32);
     PUT_NUM("ProbeContextControl", ivars->probeContextControl, 32);
     props->setObject("ProbeAttempted",
@@ -594,101 +599,80 @@ FireWireLivesOHCI::ProbeNode0(void)
      * bus 0x3ff (this bus) plus the phy_id, so node 0 is 0xffc0.
      */
     /*
-     * Build the OHCI AT header, not the 1394 wire header: the controller
-     * synthesises the wire header and fills in sourceID itself. Sending a wire
-     * header here addresses the packet to the wrong node and the controller
-     * rejects the descriptor with evt_unknown.
+     * Read node 0's config ROM header, retrying while it reports busy.
      *
-     * Speed is taken from the far node's self-ID rather than assumed, so we do
-     * not try to talk S800 to a device that negotiated slower.
+     * The header layout question is settled: the OHCI form earns ack_busy_X
+     * from the device while the 1394 wire form earns nothing at all, so the
+     * device itself confirms which one it understands. ack_busy means the
+     * packet arrived and was decoded but the responder had no buffer free,
+     * and IEEE 1394 requires the requester to retry - so a single attempt was
+     * always going to look like a failure here.
      */
-    uint8_t speed = ivars->topology.node[0].speed;
-    if (speed > FW_SPEED_S800)
-        speed = FW_SPEED_S800;
+    uint32_t lastStatus = 0;
+    uint8_t  lastAck = 0;
+    int      attempts = 0;
+    bool     accepted = false;
 
-    fw_quadlet_t header[FW_MAX_HEADER_QUADLETS];
-    int hq = ohci_build_at_header(FW_TCODE_READ_QUADLET_REQUEST,
-                                  1,        /* tlabel */
-                                  1,        /* retry_X */
-                                  speed,
-                                  0xffc0,   /* node 0 */
-                                  FW_CONFIG_ROM_BASE,
-                                  0, 0,
-                                  header, FW_MAX_HEADER_QUADLETS);
-    if (hq < 0) {
-        Log("ERROR: AT header build failed: %d", hq);
-        return kIOReturnInternalError;
-    }
-
-    /* --- receive side first, so the response has somewhere to land --- */
-    uint8_t *arDesc = ivars->asyncVirtualAddress + AR_DESCRIPTOR_OFFSET;
-    uint32_t arDescIOVA = (uint32_t)(ivars->asyncDeviceAddress + AR_DESCRIPTOR_OFFSET);
-    uint32_t arBufIOVA  = (uint32_t)(ivars->asyncDeviceAddress + AR_BUFFER_OFFSET);
-
-    memset(ivars->asyncVirtualAddress + AR_BUFFER_OFFSET, 0, AR_BUFFER_SIZE);
-
-    int arz = ohci_build_ar_buffer(arBufIOVA, AR_BUFFER_SIZE, 0,
-                                   arDesc, 256);
-    if (arz < 0) {
-        Log("ERROR: AR descriptor build failed: %d", arz);
-        return kIOReturnInternalError;
-    }
-
-    uint32_t arBase = OHCI_AsyncRspRcvContextBase;
-    ivars->trace |= (1u << 8);
-    RegisterWrite(arBase + OHCI_ContextControlClear, 0xffffffff);
-    ivars->trace |= (1u << 14);
-    RegisterWrite(arBase + OHCI_CommandPtr, ohci_command_ptr(arDescIOVA, arz));
-    ivars->trace |= (1u << 15);
-    RegisterWrite(arBase + OHCI_ContextControlSet, OHCI_ContextControl_run);
-    ivars->trace |= (1u << 9);
-
-    /* --- transmit side --- */
-    uint8_t *atDesc = ivars->asyncVirtualAddress + AT_DESCRIPTOR_OFFSET;
-    uint32_t atDescIOVA = (uint32_t)(ivars->asyncDeviceAddress + AT_DESCRIPTOR_OFFSET);
-
-    int z = ohci_build_at_request(header, (size_t)hq, 0, 0, atDesc, 256);
-    if (z < 0) {
-        Log("ERROR: AT descriptor build failed: %d", z);
-        return kIOReturnInternalError;
-    }
-
-    ivars->trace |= (1u << 3);   /* passed the guards, about to transmit */
-    Log("probing node 0 at speed %u: Z=%d, descriptor IOVA 0x%x",
-        speed, z, atDescIOVA);
-
-    uint32_t atBase = OHCI_AsyncReqTrContextBase;
-    ivars->trace |= (1u << 10);
-    RegisterWrite(atBase + OHCI_ContextControlClear, 0xffffffff);
-    RegisterWrite(atBase + OHCI_CommandPtr, ohci_command_ptr(atDescIOVA, z));
-    RegisterWrite(atBase + OHCI_ContextControlSet, OHCI_ContextControl_run);
-    ivars->trace |= (1u << 11);
-
-    /* Wait for the controller to write a completion status into the
-     * descriptor. A quadlet read on a healthy bus answers in microseconds. */
-    for (int i = 0; i < 20; i++) {
-        if (ohci_desc_is_complete(atDesc))
+    for (attempts = 0; attempts < 32; attempts++) {
+        fw_quadlet_t header[FW_MAX_HEADER_QUADLETS];
+        int hq = ohci_build_at_header(FW_TCODE_READ_QUADLET_REQUEST,
+                                      (uint8_t)(attempts & 0x3f), /* fresh tlabel */
+                                      1,                          /* retry_X */
+                                      FW_SPEED_S400,
+                                      0xffc0,                     /* node 0 */
+                                      FW_CONFIG_ROM_BASE,
+                                      0, 0,
+                                      header, FW_MAX_HEADER_QUADLETS);
+        if (hq < 0)
             break;
+
+        uint8_t *atDesc = ivars->asyncVirtualAddress + AT_DESCRIPTOR_OFFSET;
+        uint32_t atDescIOVA =
+            (uint32_t)(ivars->asyncDeviceAddress + AT_DESCRIPTOR_OFFSET);
+
+        int z = ohci_build_at_request(header, (size_t)hq, 0, 0, atDesc, 256);
+        if (z < 0)
+            break;
+
+        uint32_t atBase = OHCI_AsyncReqTrContextBase;
+        RegisterWrite(atBase + OHCI_ContextControlClear, 0xffffffff);
         IOSleep(1);
+        RegisterWrite(atBase + OHCI_CommandPtr, ohci_command_ptr(atDescIOVA, z));
+        RegisterWrite(atBase + OHCI_ContextControlSet, OHCI_ContextControl_run);
+
+        for (int i = 0; i < 20; i++) {
+            if (ohci_desc_is_complete(atDesc))
+                break;
+            IOSleep(1);
+        }
+
+        lastStatus = ohci_desc_xfer_status(atDesc);
+        lastAck    = (uint8_t)(lastStatus & 0x1f);
+
+        if (ohci_ack_is_success(lastAck)) {
+            accepted = true;
+            break;
+        }
+        if (!ohci_ack_is_busy(lastAck))
+            break;          /* not busy and not accepted: retrying will not help */
+
+        IOSleep(2);         /* give the responder a moment to free a buffer */
     }
-    ivars->trace |= (1u << 12);
 
-    ivars->trace |= (1u << 4);   /* AT context programmed and polled */
-    uint16_t xfer = ohci_desc_xfer_status(atDesc);
-    uint8_t  ack  = (uint8_t)(xfer & 0x1f);
-    uint32_t ctl  = RegisterRead(atBase + OHCI_ContextControlSet);
+    ivars->probeAck = lastStatus;
+    ivars->probeRetries = (uint32_t)attempts;
+    ivars->probeContextControl =
+        RegisterRead(OHCI_AsyncReqTrContextBase + OHCI_ContextControlSet);
 
-    ivars->probeAck = xfer;
-    ivars->probeContextControl = ctl;
+    Log("probe finished after %d attempt(s): ack %u (%s)",
+        attempts + 1, lastAck, ohci_event_name(lastAck));
 
-    Log("AT status 0x%04x, ack %u (%s), ContextControl 0x%08x",
-        xfer, ack, ohci_event_name(ack), ctl);
+    if (accepted)
+        Log("node 0 ACCEPTED the request");
+    else if (ohci_ack_is_busy(lastAck))
+        Log("node 0 still busy after %d retries", attempts);
 
-    if (ohci_ack_is_success(ack))
-        Log("node 0 ACCEPTED the request - the far-end device is talking to us");
-    else
-        Log("node 0 did not accept: %s", ohci_event_name(ack));
-
+    ivars->trace |= (1u << 4);   /* sweep complete */
     return kIOReturnSuccess;
 }
 

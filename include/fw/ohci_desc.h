@@ -150,6 +150,19 @@ const char *ohci_event_name(uint8_t event);
 /* True when an ack code means the packet reached the target intact. */
 bool ohci_ack_is_success(uint8_t ack);
 
+/*
+ * True when the target acknowledged the packet but could not accept it yet.
+ *
+ * ack_busy_X, ack_busy_A and ack_busy_B all mean the packet arrived and was
+ * decoded - the responder simply had no buffer free. IEEE 1394 requires the
+ * requester to retry in that case, so this is a positive signal about the link
+ * even though the transaction has not completed.
+ */
+bool ohci_ack_is_busy(uint8_t ack);
+
+/* True when the target responded at all, whether accepting or busy. */
+bool ohci_ack_is_response(uint8_t ack);
+
 #ifdef __cplusplus
 }
 #endif

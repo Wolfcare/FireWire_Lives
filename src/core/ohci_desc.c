@@ -236,6 +236,25 @@ bool ohci_ack_is_success(uint8_t ack)
     return ack == OHCI_ACK_COMPLETE || ack == OHCI_ACK_PENDING;
 }
 
+bool ohci_ack_is_busy(uint8_t ack)
+{
+    return ack == OHCI_ACK_BUSY_X ||
+           ack == OHCI_ACK_BUSY_A ||
+           ack == OHCI_ACK_BUSY_B;
+}
+
+bool ohci_ack_is_response(uint8_t ack)
+{
+    /* Any of these means a node on the bus received and decoded the packet.
+     * Distinguishing "the device answered" from "nothing was out there" is
+     * what tells a addressing problem apart from a busy one. */
+    return ohci_ack_is_success(ack) ||
+           ohci_ack_is_busy(ack) ||
+           ack == OHCI_ACK_DATA_ERROR ||
+           ack == OHCI_ACK_TYPE_ERROR ||
+           ack == OHCI_ACK_TARDY;
+}
+
 const char *ohci_event_name(uint8_t event)
 {
     switch (event) {

@@ -120,3 +120,31 @@ make probe    # survey the machine for a 1394 OHCI controller
 - `docs/architecture.md` — layer-by-layer design and the reasoning behind it
 - `docs/building.md` — toolchain prerequisites and the dev-signing workflow
 - `docs/roadmap.md` — what ships in which milestone
+
+## Acknowledgements
+
+**[Aleksandr Shabelnikov (mrmidi)](https://github.com/mrmidi)** — for
+[ASFireWire](https://github.com/mrmidi/ASFireWire), and for releasing it under
+Apache 2.0 rather than keeping it to himself.
+
+He rebuilt the FireWire stack on macOS 26 from nothing over seven months:
+OHCI, all four asynchronous contexts, isochronous streaming, AV/C, the
+isochronous resource manager, AudioDriverKit publication, DICE and Apogee audio
+protocols, and DV capture. He did it alone, on the hardware he happened to own,
+and then gave it away.
+
+His code is also what pointed us at the descriptor bug that had our async
+transmit context dying with `evt_unknown` — a rule we had got wrong and had
+spent hours failing to find. We verified it against the OHCI specification and
+cite the specification in the source, and no code of his was copied, but being
+pointed at the answer is worth saying out loud.
+
+If FireWire still works on your Mac in a few years, it is substantially because
+one person decided that seven months of unpaid work should belong to everybody.
+Go and look at [ASFireWire](https://github.com/mrmidi/ASFireWire). If your
+device needs a protocol it does not yet speak, contribute it — that is what he
+asked for, and it is a better use of your time than starting over.
+
+Thanks also to the **Linux `firewire` and ALSA `sound/firewire` maintainers**
+and the **FFADO project**, whose implementations remain the clearest surviving
+description of how these devices actually behave on the wire.

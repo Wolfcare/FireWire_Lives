@@ -2,8 +2,11 @@
 
 ## mrmid1's Tahoe FireWire stack
 
-A developer posting as **mrmid1** independently rebuilt the FireWire stack on
-macOS Tahoe (26) and reported it in r/mac in early 2026. Their description of
+**Aleksandr Shabelnikov** ([mrmidi](https://github.com/mrmidi), posting as
+mrmid1) independently rebuilt the FireWire stack on macOS Tahoe (26) and
+reported it in r/mac in early 2026. The work is released as
+[ASFireWire](https://github.com/mrmidi/ASFireWire) under Apache 2.0, copyright
+"ASFireWire Project Contributors". Their description of
 the approach:
 
 > No tricks: just restoring every subsystem one by one: OHCI layer (lowest,

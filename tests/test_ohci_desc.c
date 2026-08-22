@@ -159,9 +159,66 @@ static void test_bounds(void)
                FW_ERR_INVAL, "AR length beyond the reqCount field refused");
 }
 
+/*
+ * OHCI's AT DMA header is not the 1394 wire header. Quadlet 0 carries speed
+ * where the wire header carries destinationID, and quadlet 1 carries
+ * destinationID where the wire header carries sourceID. Getting this wrong
+ * addresses the packet to the wrong node and the controller rejects the
+ * descriptor with evt_unknown - which is exactly what the hardware did.
+ */
+static void test_at_header_layout(void)
+{
+    fw_quadlet_t q[FW_MAX_HEADER_QUADLETS];
+    int n = ohci_build_at_header(FW_TCODE_READ_QUADLET_REQUEST,
+                                 0x05,          /* tlabel */
+                                 1,             /* retry */
+                                 FW_SPEED_S400,
+                                 0xffc0,        /* node 0 */
+                                 FW_CONFIG_ROM_BASE,
+                                 0, 0, q, FW_MAX_HEADER_QUADLETS);
+
+    CHECK_EQ_U(n, 3, "quadlet read is 3 quadlets");
+
+    CHECK_EQ_U((q[0] >> 16) & 0x7, FW_SPEED_S400, "quadlet 0 carries speed");
+    CHECK_EQ_U((q[0] >> 10) & 0x3f, 0x05, "quadlet 0 carries tlabel");
+    CHECK_EQ_U((q[0] >> 8) & 0x3, 1, "quadlet 0 carries retry");
+    CHECK_EQ_U((q[0] >> 4) & 0xf, FW_TCODE_READ_QUADLET_REQUEST,
+               "quadlet 0 carries tcode");
+    CHECK_EQ_U(q[0] >> 24, 0, "no destinationID in quadlet 0");
+
+    CHECK_EQ_U(q[1] >> 16, 0xffc0, "quadlet 1 carries destinationID");
+    CHECK_EQ_U(q[1] & 0xffff, 0xffff, "quadlet 1 carries offset high");
+    CHECK_EQ_U(q[2], 0xf0000400u, "quadlet 2 carries offset low");
+
+    /* The wire header would have put the destination in quadlet 0 and our own
+     * node id in quadlet 1; assert we did not do that. */
+    fw_packet_header_t wire = {
+        .tcode = FW_TCODE_READ_QUADLET_REQUEST, .tlabel = 0x05, .retry = 1,
+        .destination = 0xffc0, .source = 0xffc1, .offset = FW_CONFIG_ROM_BASE,
+    };
+    fw_quadlet_t w[FW_MAX_HEADER_QUADLETS];
+    fw_packet_encode_header(&wire, w, FW_MAX_HEADER_QUADLETS);
+    CHECK(q[0] != w[0], "OHCI quadlet 0 differs from the wire header");
+    CHECK(q[1] != w[1], "OHCI quadlet 1 differs from the wire header");
+}
+
+static void test_at_header_block(void)
+{
+    fw_quadlet_t q[FW_MAX_HEADER_QUADLETS];
+    int n = ohci_build_at_header(FW_TCODE_READ_BLOCK_REQUEST, 0x0a, 1,
+                                 FW_SPEED_S800, 0xffc0,
+                                 FW_CONFIG_ROM_BASE, 1024, 0,
+                                 q, FW_MAX_HEADER_QUADLETS);
+    CHECK_EQ_U(n, 4, "block read is 4 quadlets");
+    CHECK_EQ_U((q[0] >> 16) & 0x7, FW_SPEED_S800, "S800 speed encoded");
+    CHECK_EQ_U(q[3] >> 16, 1024, "quadlet 3 carries dataLength");
+}
+
 void test_ohci_desc(void)
 {
     TEST_SUITE("ohci_desc");
+    test_at_header_layout();
+    test_at_header_block();
     test_quadlet_read_descriptor();
     test_block_write_descriptor();
     test_receive_descriptor();

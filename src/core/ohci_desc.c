@@ -31,6 +31,47 @@ uint32_t ohci_command_ptr(uint32_t block_address, int z)
     return (block_address & ~OHCI_Z_MASK) | ((uint32_t)z & OHCI_Z_MASK);
 }
 
+int ohci_build_at_header(uint8_t tcode, uint8_t tlabel, uint8_t retry,
+                         uint8_t speed, fw_nodeid_t destination,
+                         fw_offset_t offset, uint16_t data_length,
+                         uint16_t extended_tcode,
+                         fw_quadlet_t *out, size_t out_quadlets)
+{
+    if (out == NULL)
+        return FW_ERR_INVAL;
+
+    int n = fw_packet_header_quadlets(tcode);
+    if (n < 0)
+        return n;
+    if (out_quadlets < (size_t)n)
+        return FW_ERR_NOSPACE;
+
+    memset(out, 0, (size_t)n * sizeof(*out));
+
+    /* Quadlet 0 carries speed where the wire header carries destinationID. */
+    out[0] = ((uint32_t)(speed & 0x7u) << 16) |
+             ((uint32_t)(tlabel & 0x3fu) << 10) |
+             ((uint32_t)(retry & 0x3u) << 8) |
+             ((uint32_t)(tcode & 0xfu) << 4);
+
+    /* Quadlet 1 carries destinationID where the wire header carries sourceID;
+     * the controller supplies sourceID itself. */
+    out[1] = ((uint32_t)destination << 16) |
+             (uint32_t)((offset >> 32) & 0xffffu);
+
+    out[2] = (uint32_t)(offset & 0xffffffffu);
+
+    if (n > 3) {
+        /* Block requests and lock requests carry length and extended tcode. */
+        if (tcode == FW_TCODE_WRITE_QUADLET_REQUEST)
+            out[3] = 0;   /* filled by the caller with the payload quadlet */
+        else
+            out[3] = ((uint32_t)data_length << 16) | (uint32_t)extended_tcode;
+    }
+
+    return n;
+}
+
 int ohci_build_at_request(const fw_quadlet_t *header, size_t header_quadlets,
                           uint32_t payload_address, uint32_t payload_length,
                           void *block, size_t block_size)

@@ -88,7 +88,9 @@ complete and tested; driving it needs the transport underneath.
 - [x] Status block parsing with sense data, bounds-clamped
 - [ ] Drive the login handshake over a real transaction layer
 - [ ] Fetch agent: doorbell, ORB pointer, agent reset
-- [ ] Bridge to IOStorage so a disk actually mounts in Finder
+- [ ] Publish through `SCSIControllerDriverKit` so a disk mounts in Finder.
+      SBP-2 tunnels SCSI command blocks, so that family is a direct fit -
+      see `docs/prior-art.md`.
 
 ## M5 — isochronous
 
@@ -113,11 +115,16 @@ timing difficulty lives.
 The hardest of the three, and the reason the isochronous layer has to be
 genuinely good rather than merely functional.
 
-- [ ] Vendor/model identification table (DICE, BeBoB, Fireface, …)
-- [ ] AM824 / CIP audio packet framing
+- [ ] Vendor/model identification and control protocols (DICE/TCAT, BeBoB,
+      Fireface, …) - thin layers over the shared 61883-6 streaming core
+- [ ] IEC 61883-6 packet framing (AM824/CIP). This is shared by every FireWire
+      audio interface, so it is written once; per-vendor differences live in
+      the asynchronous control path above it, not here.
 - [ ] Sample-clock recovery and drift handling
 - [ ] Low-latency duplex streaming
-- [ ] CoreAudio plugin so devices appear as normal audio interfaces
+- [ ] `AudioDriverKit` (`IOUserAudioDevice`) so devices appear as normal
+      audio interfaces. Confirmed present in the DriverKit 25.5 SDK, and the
+      route another developer used to get FireWire audio working on macOS 26.
 
 ## Known risks
 

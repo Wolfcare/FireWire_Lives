@@ -82,6 +82,16 @@ struct FireWireLivesOHCI_IVars
     uint8_t                   *asyncVirtualAddress;
 
     /* Results of the node 0 probe, published to the registry. */
+    /*
+     * Execution trace bitmask. DriverKit os_log output has not been
+     * retrievable after the fact on this system, so code points record
+     * themselves here and the registry becomes the trace log.
+     */
+    uint32_t                   trace;
+    bool                       startComplete;
+    bool                       probeDone;
+    uint32_t                   selfIDHandledCount;
+    uint32_t                   probeSkipReason;
     uint32_t                   probeAck;
     uint32_t                   probeContextControl;
     bool                       probeAttempted;
@@ -409,6 +419,13 @@ FireWireLivesOHCI::PublishStatus(void)
     props->setObject("GapCountConsistent",
                      ivars->topology.gap_count_consistent ? kOSBooleanTrue
                                                           : kOSBooleanFalse);
+    PUT_NUM("AsyncBufferIOVA",    ivars->asyncDeviceAddress, 64);
+    PUT_NUM("ProbeSkipReason",    ivars->probeSkipReason, 32);
+    PUT_NUM("SelfIDHandledCount", ivars->selfIDHandledCount, 32);
+    PUT_NUM("Trace",              ivars->trace, 32);
+    props->setObject("AsyncVirtualMapped",
+                     ivars->asyncVirtualAddress ? kOSBooleanTrue
+                                                : kOSBooleanFalse);
     PUT_NUM("ProbeAckRaw",        ivars->probeAck, 32);
     PUT_NUM("ProbeAckCode",       ivars->probeAck & 0x1f, 32);
     PUT_NUM("ProbeContextControl", ivars->probeContextControl, 32);
@@ -547,38 +564,59 @@ FireWireLivesOHCI::SetupAsyncContexts(void)
     Log("async buffer: IOVA 0x%llx, %u bytes",
         ivars->asyncDeviceAddress, (unsigned)ASYNC_BUFFER_SIZE);
 
+    ivars->trace |= (1u << 0);   /* async contexts set up */
     return kIOReturnSuccess;
 }
 
 kern_return_t
 FireWireLivesOHCI::ProbeNode0(void)
 {
-    if (ivars->asyncVirtualAddress == nullptr)
+    /* Record the attempt first: an early return that happens before this
+     * leaves no trace in the registry, which is what hid the previous
+     * failure. */
+    ivars->trace |= (1u << 2);   /* ProbeNode0 entered */
+    ivars->probeAttempted = true;
+
+    if (ivars->asyncVirtualAddress == nullptr) {
+        ivars->probeSkipReason = 1;   /* no DMA mapping */
+        Log("probe skipped: async buffer was never mapped");
         return kIOReturnNotReady;
+    }
     if (ivars->topology.node_count < 2) {
+        ivars->probeSkipReason = 2;   /* nothing else on the bus */
         Log("probe skipped: only %u node(s) on the bus",
             ivars->topology.node_count);
         return kIOReturnNoDevice;
     }
 
-    ivars->probeAttempted = true;
-
     /*
      * Build a quadlet read of node 0's config ROM header. Node IDs are
      * bus 0x3ff (this bus) plus the phy_id, so node 0 is 0xffc0.
      */
-    fw_packet_header_t hdr = {};
-    hdr.tcode       = FW_TCODE_READ_QUADLET_REQUEST;
-    hdr.tlabel      = 1;
-    hdr.retry       = 1;
-    hdr.destination = 0xffc0;
-    hdr.source      = ivars->localNodeID;
-    hdr.offset      = FW_CONFIG_ROM_BASE;
+    /*
+     * Build the OHCI AT header, not the 1394 wire header: the controller
+     * synthesises the wire header and fills in sourceID itself. Sending a wire
+     * header here addresses the packet to the wrong node and the controller
+     * rejects the descriptor with evt_unknown.
+     *
+     * Speed is taken from the far node's self-ID rather than assumed, so we do
+     * not try to talk S800 to a device that negotiated slower.
+     */
+    uint8_t speed = ivars->topology.node[0].speed;
+    if (speed > FW_SPEED_S800)
+        speed = FW_SPEED_S800;
 
     fw_quadlet_t header[FW_MAX_HEADER_QUADLETS];
-    int hq = fw_packet_encode_header(&hdr, header, FW_MAX_HEADER_QUADLETS);
+    int hq = ohci_build_at_header(FW_TCODE_READ_QUADLET_REQUEST,
+                                  1,        /* tlabel */
+                                  1,        /* retry_X */
+                                  speed,
+                                  0xffc0,   /* node 0 */
+                                  FW_CONFIG_ROM_BASE,
+                                  0, 0,
+                                  header, FW_MAX_HEADER_QUADLETS);
     if (hq < 0) {
-        Log("ERROR: header encode failed: %d", hq);
+        Log("ERROR: AT header build failed: %d", hq);
         return kIOReturnInternalError;
     }
 
@@ -597,9 +635,13 @@ FireWireLivesOHCI::ProbeNode0(void)
     }
 
     uint32_t arBase = OHCI_AsyncRspRcvContextBase;
+    ivars->trace |= (1u << 8);
     RegisterWrite(arBase + OHCI_ContextControlClear, 0xffffffff);
+    ivars->trace |= (1u << 14);
     RegisterWrite(arBase + OHCI_CommandPtr, ohci_command_ptr(arDescIOVA, arz));
+    ivars->trace |= (1u << 15);
     RegisterWrite(arBase + OHCI_ContextControlSet, OHCI_ContextControl_run);
+    ivars->trace |= (1u << 9);
 
     /* --- transmit side --- */
     uint8_t *atDesc = ivars->asyncVirtualAddress + AT_DESCRIPTOR_OFFSET;
@@ -611,22 +653,27 @@ FireWireLivesOHCI::ProbeNode0(void)
         return kIOReturnInternalError;
     }
 
-    Log("probing node 0: tcode %u, offset 0x%llx, Z=%d, descriptor IOVA 0x%x",
-        hdr.tcode, (unsigned long long)hdr.offset, z, atDescIOVA);
+    ivars->trace |= (1u << 3);   /* passed the guards, about to transmit */
+    Log("probing node 0 at speed %u: Z=%d, descriptor IOVA 0x%x",
+        speed, z, atDescIOVA);
 
     uint32_t atBase = OHCI_AsyncReqTrContextBase;
+    ivars->trace |= (1u << 10);
     RegisterWrite(atBase + OHCI_ContextControlClear, 0xffffffff);
     RegisterWrite(atBase + OHCI_CommandPtr, ohci_command_ptr(atDescIOVA, z));
     RegisterWrite(atBase + OHCI_ContextControlSet, OHCI_ContextControl_run);
+    ivars->trace |= (1u << 11);
 
     /* Wait for the controller to write a completion status into the
      * descriptor. A quadlet read on a healthy bus answers in microseconds. */
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 20; i++) {
         if (ohci_desc_is_complete(atDesc))
             break;
         IOSleep(1);
     }
+    ivars->trace |= (1u << 12);
 
+    ivars->trace |= (1u << 4);   /* AT context programmed and polled */
     uint16_t xfer = ohci_desc_xfer_status(atDesc);
     uint8_t  ack  = (uint8_t)(xfer & 0x1f);
     uint32_t ctl  = RegisterRead(atBase + OHCI_ContextControlSet);
@@ -711,8 +758,36 @@ IMPL(FireWireLivesOHCI, InterruptOccurred)
     if (events & OHCI_Int_busReset)
         HandleBusReset();
 
-    if (events & OHCI_Int_selfIDComplete)
-        HandleSelfIDComplete();
+    /*
+     * Handle self-ID whenever the buffer holds a complete burst, rather than
+     * keying off a named event bit: this controller raises bit 15 where the
+     * specification names bit 16, and gating on the data itself is immune to
+     * that difference.
+     */
+    if (ivars->startComplete) {
+        uint32_t selfIDCount = RegisterRead(OHCI_SelfIDCount);
+
+        if (selfIDCount != OHCI_BAD_READ &&
+            (selfIDCount & OHCI_SelfIDCount_selfIDError) == 0) {
+            uint32_t quadlets = (selfIDCount >> OHCI_SelfIDCount_sizeShift) &
+                                OHCI_SelfIDCount_sizeMask;
+
+            if (quadlets >= 3) {
+                ivars->trace |= (1u << 1);
+                HandleSelfIDComplete();
+
+                if (!ivars->probeDone && ivars->topology.node_count >= 2) {
+                    ivars->probeDone = true;
+                    ivars->trace |= (1u << 7);
+                    ProbeNode0();
+                }
+
+                /* One publish, from the interrupt path, once the work is
+                 * done - not sprinkled through it. */
+                PublishStatus();
+            }
+        }
+    }
 }
 
 void
@@ -798,7 +873,9 @@ FireWireLivesOHCI::HandleSelfIDComplete(void)
     if (!ivars->topology.gap_count_consistent)
         Log("gap counts disagree; a PHY config packet is needed");
 
-    PublishStatus();
+    ivars->selfIDHandledCount++;
+    ivars->trace |= (1u << 5);   /* self-ID handled */
+
 }
 
 /* ------------------------------------------------------------------ */
@@ -861,40 +938,17 @@ IMPL(FireWireLivesOHCI, Start)
 
     PublishStatus();
     RegisterService();
+    ivars->trace |= (1u << 13);
     Log("started");
 
     /*
-     * Enumerate. Self-ID packets normally arrive via the interrupt handler,
-     * but poll IntEvent as well: if the interrupt is not wired to the index we
-     * registered, polling still proves whether the hardware enumerated, which
-     * separates "the bus did not reset" from "the interrupt never arrived".
+     * Start() must return promptly - IOKit holds the provider busy until it
+     * does, and an earlier version that slept and polled here for the better
+     * part of a second never completed its work. Kick the bus reset and let
+     * the interrupt path handle self-ID and the probe asynchronously.
      */
+    ivars->startComplete = true;
     InitiateBusReset();
-
-    for (int i = 0; i < 200; i++) {
-        uint32_t selfIDCount = RegisterRead(OHCI_SelfIDCount);
-
-        /* Gate on the self-ID buffer actually being populated rather than on
-         * an interrupt event bit: which event a given chip raises varies, but
-         * data landing in the buffer does not. */
-        if (selfIDCount != OHCI_BAD_READ &&
-            (selfIDCount & OHCI_SelfIDCount_selfIDError) == 0) {
-            uint32_t quadlets = (selfIDCount >> OHCI_SelfIDCount_sizeShift) &
-                                OHCI_SelfIDCount_sizeMask;
-            if (quadlets >= 3) {
-                Log("self-ID data present after %dms (SelfIDCount 0x%08x)",
-                    i * 5, selfIDCount);
-                RegisterWrite(OHCI_IntEventClear,
-                              OHCI_Int_selfIDComplete | OHCI_Int_busReset);
-                ivars->generation++;
-                HandleSelfIDComplete();
-                ProbeNode0();
-                PublishStatus();
-                break;
-            }
-        }
-        IOSleep(5);
-    }
 
     {
         /* Record what the hardware ended up reporting either way, so a failed

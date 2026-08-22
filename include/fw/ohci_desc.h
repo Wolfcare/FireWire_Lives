@@ -40,6 +40,32 @@ extern "C" {
 #define OHCI_IMMEDIATE_MAX_BYTES 32
 
 /*
+ * Build the packet header OHCI's async transmit DMA expects.
+ *
+ * This is NOT the IEEE 1394 wire header. The controller synthesises the wire
+ * header itself - notably it fills in sourceID - and expects a different
+ * layout in the descriptor's immediate data (OHCI 1.1 figure 7-1):
+ *
+ *   quadlet 0:  srcBusID(23) | spd(18:16) | tLabel(15:10) | rt(9:8) | tCode(7:4)
+ *   quadlet 1:  destinationID(31:16) | destinationOffsetHigh(15:0)
+ *   quadlet 2:  destinationOffsetLow
+ *   quadlet 3:  dataLength(31:16) | extendedTcode(15:0)     [block only]
+ *
+ * The trap is that quadlet 0 of the wire header carries destinationID where
+ * OHCI carries speed, and quadlet 1 carries sourceID where OHCI carries
+ * destinationID. Feeding a wire header to the AT context produces a packet
+ * addressed to the wrong node at the wrong speed, and the controller rejects
+ * the descriptor with evt_unknown.
+ *
+ * Returns the number of quadlets written, or a negative fw_err_t.
+ */
+int ohci_build_at_header(uint8_t tcode, uint8_t tlabel, uint8_t retry,
+                         uint8_t speed, fw_nodeid_t destination,
+                         fw_offset_t offset, uint16_t data_length,
+                         uint16_t extended_tcode,
+                         fw_quadlet_t *out, size_t out_quadlets);
+
+/*
  * Build an asynchronous transmit descriptor block for one request.
  *
  * `header` holds the async packet header quadlets already encoded by

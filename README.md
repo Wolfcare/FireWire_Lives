@@ -7,6 +7,22 @@ Target platform is **Apple Silicon**. FireWire hardware reaches the machine
 through a Thunderbolt-to-FireWire adapter, which presents a standard 1394 OHCI
 controller over PCIe.
 
+> **Status: this project is now a reference and notes repository.**
+>
+> The goal was FireWire audio on macOS 26. That is already solved by
+> [ASFireWire](https://github.com/mrmidi/ASFireWire) (Apache 2.0), which
+> implements every milestone below and several beyond, verified against real
+> audio hardware. Continuing to rebuild the same stack here would duplicate
+> months of solved work, so active effort has moved to contributing MOTU and
+> RME protocol support to ASFireWire — the two gaps its author could not fill
+> for lack of the hardware.
+>
+> What stays useful here: the portable protocol core and its 287 tests, the
+> descriptor rules verified against the OHCI specification, the
+> dependency-free PDF extractor in `tools/pdf/`, and a written record of every
+> trap this work hit — `IOPCITunnelCompatible`, the stale-driver problem,
+> `Z = 0` list termination, and the AT header layout. See `docs/prior-art.md`.
+
 ## What Apple removed
 
 Verified on macOS 26.6.2 (build 25G83), arm64, in August 2026:

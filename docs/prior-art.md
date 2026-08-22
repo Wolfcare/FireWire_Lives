@@ -52,6 +52,42 @@ Two concrete pointers from the thread:
   the Linux ALSA firewire stack — which is the reference to read rather than
   reverse-engineering it again.
 
+## ASFireWire is released, and it is Apache 2.0
+
+<https://github.com/mrmidi/ASFireWire>
+
+The code is out. It is a far more complete implementation than this project,
+covering every milestone on our roadmap and several beyond it: OHCI bring-up,
+all four async contexts, isochronous transmit with interrupt-driven ring
+refill, AV/C and CMP, the isochronous resource manager, AudioDriverKit
+publication, DICE and Apogee/Oxford audio protocols, DV capture with tape
+transport, and an `SBP2` protocol directory. Verified against Apogee Duet,
+Terratec PHASE 88 Rack, Focusrite Saffire Pro 24 DSP, PreSonus StudioLive
+16.0.2 and Midas Venice F32.
+
+Apache 2.0 means it may be used, modified and redistributed with attribution.
+Anyone whose goal is *working FireWire on macOS 26* should start there rather
+than here.
+
+### Descriptor rules learned from it
+
+Three constraints their code documents, which this project got wrong and has
+now fixed:
+
+- **`OUTPUT_LAST` must always set branch=always, even as the final descriptor.**
+  End of list is signalled *solely* by a zero branch address. Setting
+  branch=never gets the descriptor rejected with `evt_unknown` - which is
+  exactly the failure our hardware reported.
+- **`OUTPUT_MORE` header descriptors take interrupt=never and branch=never.**
+  The controller reaches the following descriptor by physical contiguity and
+  ignores their branch word, so the whole block must be allocated contiguously.
+- **Z must satisfy 2 <= Z <= 8**, and the full descriptor must be flushed -
+  16 bytes for a standard descriptor, 32 for an immediate one. Flushing only
+  the control word leaves stale data in the controller's prefetch buffer.
+
+Their code also always sets interrupt=always on `OUTPUT_LAST`, so an AT
+completion interrupt arrives even when no response follows.
+
 ## Reference implementations worth reading
 
 - **Linux `drivers/firewire`** — the OHCI driver, transaction layer and

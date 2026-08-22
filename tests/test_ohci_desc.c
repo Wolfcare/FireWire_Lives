@@ -40,6 +40,12 @@ static void test_quadlet_read_descriptor(void)
     CHECK_EQ_U(control & 0xffff, 12, "reqCount is the header byte count");
     CHECK_EQ_U((control >> OHCI_DESC_INTERRUPT_SHIFT) & 0x3,
                OHCI_DESC_INTERRUPT_ALWAYS, "interrupt on completion");
+    /* End of list is signalled by a zero branch ADDRESS, never by the branch
+     * control field. branch=never on an OUTPUT_LAST gets the descriptor
+     * rejected with evt_unknown. */
+    CHECK_EQ_U((control >> OHCI_DESC_BRANCH_SHIFT) & 0x3,
+               OHCI_DESC_BRANCH_ALWAYS, "OUTPUT_LAST always branches");
+    CHECK_EQ_U(le32_at(block, 8), 0, "zero branch address terminates the list");
 
     /* The header quadlets follow the descriptor, little-endian. */
     CHECK_EQ_U(le32_at(block, 16), q[0], "immediate quadlet 0");
@@ -75,6 +81,10 @@ static void test_block_write_descriptor(void)
     uint32_t c0 = le32_at(block, 0);
     CHECK_EQ_U(c0 >> OHCI_DESC_CMD_SHIFT, OHCI_DESC_OUTPUT_MORE,
                "header descriptor is OUTPUT_MORE when a payload follows");
+    CHECK_EQ_U((c0 >> OHCI_DESC_BRANCH_SHIFT) & 0x3, 0,
+               "OUTPUT_MORE does not branch; contiguity reaches the next one");
+    CHECK_EQ_U((c0 >> OHCI_DESC_INTERRUPT_SHIFT) & 0x3, 0,
+               "OUTPUT_MORE does not interrupt");
 
     /* The payload descriptor sits after the 16-byte immediate unit. */
     uint32_t c1 = le32_at(block, 32);
@@ -83,6 +93,8 @@ static void test_block_write_descriptor(void)
     CHECK_EQ_U((c1 >> OHCI_DESC_KEY_SHIFT) & 0x7, 0,
                "payload descriptor points at data rather than carrying it");
     CHECK_EQ_U(c1 & 0xffff, 8, "payload reqCount");
+    CHECK_EQ_U((c1 >> OHCI_DESC_BRANCH_SHIFT) & 0x3, OHCI_DESC_BRANCH_ALWAYS,
+               "payload OUTPUT_LAST also branches always");
     CHECK_EQ_U(le32_at(block, 36), 0x80001000u, "payload DMA address");
 }
 

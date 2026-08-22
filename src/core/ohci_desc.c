@@ -116,13 +116,27 @@ int ohci_build_at_request(const fw_quadlet_t *header, size_t header_quadlets,
      * is OUTPUT_LAST and asks for an interrupt. With a payload it is
      * OUTPUT_MORE and the following descriptor terminates the block.
      */
-    uint32_t cmd = has_payload ? OHCI_DESC_OUTPUT_MORE : OHCI_DESC_OUTPUT_LAST;
-    uint32_t interrupt = has_payload ? 0 : OHCI_DESC_INTERRUPT_ALWAYS;
+    /*
+     * OUTPUT_LAST must always carry branch=always, even when it ends the list:
+     * end of list is signalled solely by a zero branch address, never by the
+     * branch control field. Setting branch=never here makes the controller
+     * reject the descriptor with evt_unknown.
+     *
+     * OUTPUT_MORE header descriptors take interrupt=never/branch=never,
+     * because the controller relies on physical contiguity to reach the
+     * descriptor that follows and ignores their branch word.
+     */
+    bool header_is_last = !has_payload;
+
+    uint32_t cmd       = header_is_last ? OHCI_DESC_OUTPUT_LAST
+                                        : OHCI_DESC_OUTPUT_MORE;
+    uint32_t interrupt = header_is_last ? OHCI_DESC_INTERRUPT_ALWAYS : 0;
+    uint32_t branch    = header_is_last ? OHCI_DESC_BRANCH_ALWAYS : 0;
 
     put_le32(p + 0, ohci_desc_control(cmd,
                                       OHCI_DESC_KEY_IMMEDIATE,
                                       interrupt,
-                                      0, /* branch handled by CommandPtr/Z */
+                                      branch,
                                       (uint32_t)header_bytes));
     put_le32(p + 4, 0);   /* immediate data follows; no separate address */
     put_le32(p + 8, 0);   /* branch address filled in by the caller */
@@ -136,10 +150,11 @@ int ohci_build_at_request(const fw_quadlet_t *header, size_t header_quadlets,
     if (has_payload) {
         uint8_t *d1 = immediate + immediate_bytes;
 
+        /* Same rule: branch=always, terminated by a zero branch address. */
         put_le32(d1 + 0, ohci_desc_control(OHCI_DESC_OUTPUT_LAST,
                                            0, /* key 0: address points at data */
                                            OHCI_DESC_INTERRUPT_ALWAYS,
-                                           0,
+                                           OHCI_DESC_BRANCH_ALWAYS,
                                            payload_length));
         put_le32(d1 + 4, payload_address);
         put_le32(d1 + 8, 0);
@@ -147,8 +162,10 @@ int ohci_build_at_request(const fw_quadlet_t *header, size_t header_quadlets,
     }
 
     /* Z counts 16-byte units: the header descriptor, its immediate data, and
-     * the payload descriptor if present. */
+     * the payload descriptor if present. The controller requires 2 <= Z <= 8. */
     int z = 1 + (int)immediate_units + (has_payload ? 1 : 0);
+    if (z < 2 || z > 8)
+        return FW_ERR_INVAL;
     return z;
 }
 

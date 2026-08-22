@@ -88,6 +88,19 @@ now fixed:
 Their code also always sets interrupt=always on `OUTPUT_LAST`, so an AT
 completion interrupt arrives even when no response follows.
 
+## mrmidi/FireWireAudio — the predecessor
+
+<https://github.com/mrmidi/FireWireAudio> (MIT)
+
+The same author's earlier project: C++23, CMake, built on **IOKit's FireWire
+family** via `IOKitFireWireDeviceDiscovery`, with an AV/C `CommandInterface`
+and device control infrastructure. It reached proof-of-concept audio streaming.
+
+Its limitation is the reason ASFireWire exists: it depends on the kernel
+FireWire stack, so it cannot work on macOS 26 where that stack is gone. Useful
+now mainly as an AV/C command-layer reference, and MIT licensing makes it the
+more permissive of the two to borrow from.
+
 ## Reference implementations worth reading
 
 - **Linux `drivers/firewire`** — the OHCI driver, transaction layer and

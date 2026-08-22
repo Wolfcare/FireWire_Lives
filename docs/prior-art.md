@@ -69,18 +69,27 @@ Apache 2.0 means it may be used, modified and redistributed with attribution.
 Anyone whose goal is *working FireWire on macOS 26* should start there rather
 than here.
 
-### Descriptor rules learned from it
+### Descriptor rules learned from it, then verified against the spec
+
+Credit where it is due: their repository is what pointed us at the descriptor
+bug that had cost several hours of hardware cycles. Having been pointed at it,
+we verified every rule against the primary source - the 1394 Open Host
+Controller Interface Specification - and the code cites the specification
+rather than their implementation. No code was copied.
+
 
 Three constraints their code documents, which this project got wrong and has
 now fixed:
 
-- **`OUTPUT_LAST` must always set branch=always, even as the final descriptor.**
-  End of list is signalled *solely* by a zero branch address. Setting
-  branch=never gets the descriptor rejected with `evt_unknown` - which is
-  exactly the failure our hardware reported.
-- **`OUTPUT_MORE` header descriptors take interrupt=never and branch=never.**
-  The controller reaches the following descriptor by physical contiguity and
-  ignores their branch word, so the whole block must be allocated contiguously.
+- **`OUTPUT_LAST` always sets branch control to `2'b11`.** Confirmed by OHCI
+  1.1 section 7.1.3-7.1.4, which fixes the field, and by: *"All DMA context
+  programs must use a Z = 0 command to indicate the end of the program."* End
+  of list is the Z field, never the branch control field. Getting this wrong
+  is what produced the `evt_unknown` our hardware reported.
+- **`OUTPUT_MORE` descriptors ignore branch entirely.** The spec is explicit:
+  *"BranchAddress+Z values are ignored in all OUTPUT_MORE* descriptors, and
+  should not be specified."* The controller relies on physical contiguity, so
+  the descriptor block must be allocated as one contiguous run.
 - **Z must satisfy 2 <= Z <= 8**, and the full descriptor must be flushed -
   16 bytes for a standard descriptor, 32 for an immediate one. Flushing only
   the control word leaves stale data in the controller's prefetch buffer.

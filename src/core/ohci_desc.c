@@ -31,6 +31,13 @@ uint32_t ohci_command_ptr(uint32_t block_address, int z)
     return (block_address & ~OHCI_Z_MASK) | ((uint32_t)z & OHCI_Z_MASK);
 }
 
+/*
+ * Per OHCI 1.1 section 7.5, the AT request format places srcBusID, spd,
+ * tLabel, rt and tCode in the first quadlet, and destinationID alongside
+ * destinationOffsetHigh in the second - unlike the IEEE 1394 wire header,
+ * where quadlet 0 carries destinationID and quadlet 1 carries sourceID. The
+ * controller synthesises the wire header and supplies sourceID itself.
+ */
 int ohci_build_at_header(uint8_t tcode, uint8_t tlabel, uint8_t retry,
                          uint8_t speed, fw_nodeid_t destination,
                          fw_offset_t offset, uint16_t data_length,

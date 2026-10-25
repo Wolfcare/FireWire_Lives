@@ -18,10 +18,11 @@ TEST_OBJ := $(patsubst tests/%.c,$(BUILD)/tests/%.o,$(TEST_SRC))
 
 TEST_BIN := $(BUILD)/fwtest
 PROBE_BIN := $(BUILD)/fwprobe
+MOTU_BIN  := $(BUILD)/motuprobe
 
-.PHONY: all test probe clean asan
+.PHONY: all test probe motu clean asan
 
-all: $(TEST_BIN) $(PROBE_BIN)
+all: $(TEST_BIN) $(PROBE_BIN) $(MOTU_BIN)
 
 # ---- core objects ----
 $(BUILD)/core/%.o: src/core/%.c
@@ -41,6 +42,11 @@ $(PROBE_BIN): tools/fwprobe/fwprobe.c $(CORE_OBJ)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $^ -o $@ -framework IOKit -framework CoreFoundation
 
+# ---- motuprobe: read-only register reads from a MOTU unit via IOFireWireLib ----
+$(MOTU_BIN): tools/motuprobe/motuprobe.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ -framework IOKit -framework CoreFoundation
+
 test: $(TEST_BIN)
 	@$(TEST_BIN)
 
@@ -56,6 +62,10 @@ asan:
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer \
 	    -Itests $(CORE_SRC) $(TEST_SRC) -o $(BUILD)/asan/fwtest
 	@$(BUILD)/asan/fwtest
+
+# Exit 2 means no MOTU unit is on the bus.
+motu: $(MOTU_BIN)
+	@$(MOTU_BIN) || true
 
 clean:
 	rm -rf $(BUILD)

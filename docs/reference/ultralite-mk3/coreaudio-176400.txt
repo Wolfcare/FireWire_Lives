@@ -1,0 +1,36 @@
+# build/cadump --rate 176400  (MOTU driver 1.6 89555, macOS 15.8, 2026-10-25)
+device: MOTU UltraLite mk3
+  uid: com_motu_driver_FWA_Engine:000008be94
+  transport: '1394'
+  nominal rate: 176400 Hz
+  buffer size: 512 frames
+  available rates: 44100 48000 88200 96000 176400 192000
+  clock sources:
+    0x00000000  Internal  (current)
+    0x00000006  SMPTE
+  in  streams: 8 2  (10 channels)
+  in  latency 25, safety offset 96 frames
+    in   1  Analog 1
+    in   2  Analog 2
+    in   3  Analog 3
+    in   4  Analog 4
+    in   5  Analog 5
+    in   6  Analog 6
+    in   7  Analog 7
+    in   8  Analog 8
+    in   9  Return 1
+    in  10  Return 2
+  out streams: 2 8 2  (12 channels)
+  out latency 28, safety offset 96 frames
+    out  1  Main Out 1
+    out  2  Main Out 2
+    out  3  Analog 1
+    out  4  Analog 2
+    out  5  Analog 3
+    out  6  Analog 4
+    out  7  Analog 5
+    out  8  Analog 6
+    out  9  Analog 7
+    out 10  Analog 8
+    out 11  Phones 1
+    out 12  Phones 2

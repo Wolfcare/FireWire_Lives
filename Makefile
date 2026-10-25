@@ -19,10 +19,11 @@ TEST_OBJ := $(patsubst tests/%.c,$(BUILD)/tests/%.o,$(TEST_SRC))
 TEST_BIN := $(BUILD)/fwtest
 PROBE_BIN := $(BUILD)/fwprobe
 MOTU_BIN  := $(BUILD)/motuprobe
+CADUMP_BIN := $(BUILD)/cadump
 
-.PHONY: all test probe motu clean asan
+.PHONY: all test probe motu cadump clean asan
 
-all: $(TEST_BIN) $(PROBE_BIN) $(MOTU_BIN)
+all: $(TEST_BIN) $(PROBE_BIN) $(MOTU_BIN) $(CADUMP_BIN)
 
 # ---- core objects ----
 $(BUILD)/core/%.o: src/core/%.c
@@ -47,6 +48,11 @@ $(MOTU_BIN): tools/motuprobe/motuprobe.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $^ -o $@ -framework IOKit -framework CoreFoundation
 
+# ---- cadump: how Core Audio presents a device (the reference to match) ----
+$(CADUMP_BIN): tools/cadump/cadump.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ -framework CoreAudio -framework CoreFoundation
+
 test: $(TEST_BIN)
 	@$(TEST_BIN)
 
@@ -66,6 +72,9 @@ asan:
 # Exit 2 means no MOTU unit is on the bus.
 motu: $(MOTU_BIN)
 	@$(MOTU_BIN) || true
+
+cadump: $(CADUMP_BIN)
+	@$(CADUMP_BIN) || true
 
 clean:
 	rm -rf $(BUILD)

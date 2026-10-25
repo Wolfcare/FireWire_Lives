@@ -1,0 +1,18 @@
+# build/motuprobe while the MOTU 1.6 89555 driver streams at 44.1 kHz (macOS 15.8, 2026-10-25)
+MOTU unit, version 0x000019: UltraLite mk3 (FireWire)
+  protocol v3
+  node 0xffc0, bus generation 2
+  config ROM verified, GUID 0001f2000008be94
+
+  register           offset  value
+  isoc comm control  0x0b00  0x61620000
+    rx stream: active, channel 33
+    tx stream: active, channel 34
+  async addr hi      0x0b04  0xffc10001
+  async addr lo      0x0b08  0x00000000
+  packet format      0x0b10  0x00000002
+  v3 clock status    0x0b14  0x02000000
+    sample rate: 44100 Hz
+    clock source: internal (0x00)
+    fetch PCM frames: yes
+  v3 opt iface mode  0x0c94  0x00000000

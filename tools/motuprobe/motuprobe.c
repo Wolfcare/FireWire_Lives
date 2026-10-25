@@ -8,16 +8,20 @@
  * to the unit by issuing read-only quadlet reads through Apple's own
  * IOFireWireLib, which still works on macOS 15 and earlier.
  *
- * Nothing here writes to the device. Register offsets and field layouts come
- * from the Linux ALSA driver (sound/firewire/motu/), the only public
- * description of the protocol.
+ * By default nothing is written to the device. With --rate it changes the
+ * sample rate the way the Linux driver does: rewrite only the rate field of
+ * the clock status register, then wait for the unit to report the new rate.
+ * Register offsets and field layouts come from the Linux ALSA driver
+ * (sound/firewire/motu/), the only public description of the protocol.
  *
  * Build: make motu
+ * Usage: motuprobe [--rate 44100|48000|88200|96000|176400|192000]
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <libkern/OSByteOrder.h>
 
@@ -40,7 +44,15 @@
 
 /* Protocol v3 (motu-protocol-v3.c). */
 #define V3_CLOCK_STATUS     0x0b14u
+#define  V3_FETCH_PCM_FRAMES 0x02000000u
+#define  V3_CLOCK_RATE_MASK  0x0000ff00u
+#define  V3_CLOCK_RATE_SHIFT 8
+#define V3_CLK_WAIT_MSEC    4000
 #define V3_OPT_IFACE_MODE   0x0c94u
+
+static const unsigned clock_rates[] = { 44100, 48000, 88200, 96000,
+                                        176400, 192000 };
+#define CLOCK_RATE_COUNT (sizeof(clock_rates) / sizeof(clock_rates[0]))
 
 struct motu_model {
     uint32_t version;
@@ -150,6 +162,22 @@ static IOReturn read_reg(IOFireWireLibDeviceRef dev, io_service_t unit,
     return ret;
 }
 
+static IOReturn write_reg(IOFireWireLibDeviceRef dev, io_service_t unit,
+                          uint32_t offset, uint32_t value)
+{
+    UInt32 generation = 0;
+    IOReturn ret = (*dev)->GetBusGeneration(dev, &generation);
+    if (ret != kIOReturnSuccess)
+        return ret;
+
+    FWAddress addr = { 0 };
+    addr.addressHi = MOTU_ADDR_HI;
+    addr.addressLo = MOTU_ADDR_LO_BASE + offset;
+
+    return (*dev)->WriteQuadlet(dev, unit, &addr, OSSwapHostToBigInt32(value),
+                                true, generation);
+}
+
 static void print_reg(const char *name, uint32_t offset, IOReturn ret,
                       uint32_t value)
 {
@@ -169,8 +197,6 @@ static void decode_isoc_comm(uint32_t v)
 
 static void decode_v3_clock(uint32_t v)
 {
-    static const unsigned rates[] = { 44100, 48000, 88200, 96000,
-                                      176400, 192000 };
     uint32_t rate = (v >> 8) & 0xffu;
     uint32_t src = v & 0xffu;
     const char *src_name;
@@ -186,15 +212,69 @@ static void decode_v3_clock(uint32_t v)
     default:   src_name = "unknown"; break;
     }
 
-    if (rate < sizeof(rates) / sizeof(rates[0]))
-        printf("    sample rate: %u Hz\n", rates[rate]);
+    if (rate < CLOCK_RATE_COUNT)
+        printf("    sample rate: %u Hz\n", clock_rates[rate]);
     else
         printf("    sample rate: unknown index %u\n", rate);
     printf("    clock source: %s (0x%02x)\n", src_name, src);
     printf("    fetch PCM frames: %s\n", (v & 0x02000000u) ? "yes" : "no");
 }
 
-static void probe_unit(io_service_t unit)
+/*
+ * Mirrors snd_motu_protocol_v3_set_clock_rate(). Linux waits for the unit's
+ * CLK_CHANGED notification; we have not registered a notification address
+ * (0x0b04/0x0b08), so poll the register until the new rate reads back.
+ */
+static int set_v3_rate(IOFireWireLibDeviceRef dev, io_service_t unit,
+                       unsigned rate)
+{
+    uint32_t index;
+    for (index = 0; index < CLOCK_RATE_COUNT; index++)
+        if (clock_rates[index] == rate)
+            break;
+    if (index == CLOCK_RATE_COUNT) {
+        printf("  unsupported rate %u\n", rate);
+        return -1;
+    }
+
+    uint32_t before = 0;
+    IOReturn ret = read_reg(dev, unit, V3_CLOCK_STATUS, &before);
+    if (ret != kIOReturnSuccess) {
+        printf("  clock status read failed: 0x%08x\n", ret);
+        return -1;
+    }
+
+    uint32_t data = before & ~(V3_CLOCK_RATE_MASK | V3_FETCH_PCM_FRAMES);
+    data |= index << V3_CLOCK_RATE_SHIFT;
+    if (data == before) {
+        printf("\n  already at %u Hz, nothing written\n", rate);
+        return 0;
+    }
+
+    printf("\n  writing clock status 0x%08x -> 0x%08x\n", before, data);
+    ret = write_reg(dev, unit, V3_CLOCK_STATUS, data);
+    if (ret != kIOReturnSuccess) {
+        printf("  write failed: 0x%08x\n", ret);
+        return -1;
+    }
+
+    const struct timespec step = { 0, 50 * 1000 * 1000 };
+    for (int waited = 0; waited <= V3_CLK_WAIT_MSEC; waited += 50) {
+        uint32_t now = 0;
+        if (read_reg(dev, unit, V3_CLOCK_STATUS, &now) == kIOReturnSuccess &&
+            ((now & V3_CLOCK_RATE_MASK) >> V3_CLOCK_RATE_SHIFT) == index) {
+            printf("  unit reports %u Hz after %d ms (0x%08x)\n", rate,
+                   waited, now);
+            return 0;
+        }
+        nanosleep(&step, NULL);
+    }
+    printf("  timed out: rate did not read back within %d ms\n",
+           V3_CLK_WAIT_MSEC);
+    return -1;
+}
+
+static void probe_unit(io_service_t unit, unsigned set_rate)
 {
     uint32_t version = io_prop_u32(unit, "Unit_SW_Version", 0);
     const struct motu_model *model = find_model(version);
@@ -258,12 +338,27 @@ static void probe_unit(io_service_t unit)
             decode_v3_clock(value);
     }
 
+    if (set_rate) {
+        if (model && model->protocol == 3)
+            set_v3_rate(dev, unit, set_rate);
+        else
+            printf("\n  --rate is only implemented for protocol v3\n");
+    }
+
     (*dev)->Close(dev);
     (*dev)->Release(dev);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    unsigned set_rate = 0;
+    if (argc == 3 && strcmp(argv[1], "--rate") == 0) {
+        set_rate = (unsigned)strtoul(argv[2], NULL, 10);
+    } else if (argc != 1) {
+        fprintf(stderr, "usage: %s [--rate HZ]\n", argv[0]);
+        return 1;
+    }
+
     io_iterator_t iter = IO_OBJECT_NULL;
     kern_return_t kr = IOServiceGetMatchingServices(
         kIOMainPortDefault, IOServiceMatching("IOFireWireUnit"), &iter);
@@ -278,7 +373,7 @@ int main(void)
         if (io_prop_u32(unit, "Unit_Spec_ID", 0) == OUI_MOTU) {
             if (found++)
                 printf("\n");
-            probe_unit(unit);
+            probe_unit(unit, set_rate);
         }
         IOObjectRelease(unit);
     }

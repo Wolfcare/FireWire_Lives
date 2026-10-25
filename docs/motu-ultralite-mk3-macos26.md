@@ -161,7 +161,7 @@ difference is the driver.
 
 The code lives on branch `motu-ultralite-mk3-fixes` of a local ASFireWire
 clone (`../ASFireWire`), based on `main` at `0a3879e3` (2026-10-23). Nothing is
-pushed. Every change has host tests; ASFireWire's full C++ suite passes (3,977
+pushed. Every change has host tests; ASFireWire's full C++ suite passes (3,980
 tests). None of it has run on hardware under ASFireWire yet.
 
 This Mac cannot build the dext itself: Xcode 26.3 ships DriverKit 25.2, and
@@ -175,8 +175,8 @@ with a space in it ("Firewire lives"). Both are outside this work.
 | Latency: MOTU's per-rate values; safety offset doubles per rate mode | Done | `f9e4015d` |
 | 88.2–192 kHz pinned against MOTU's driver | Done (audio needs hardware) | `d81c6aa5` |
 | MIDI in and out, one port each way | Done | `9259a71d`, `7f0c26af` |
-| CueMix mixer: 8 mixes × 10 sources, gain/pan/mute/solo, mix volume/mute/destination, main volume | Done | `94e0f4c3`, `abeaf649`, `6fd1d4f9` |
-| CueMix reverb, input/output EQ and dynamics, meters, talkback | Not started | |
+| CueMix: mixer, monitor/talkback, input and output EQ and dynamics, reverb (~1,500 parameters) | Done | `94e0f4c3`, `abeaf649`, `6fd1d4f9`, `aab4e51f` |
+| CueMix level meters | Left out: they ride in the isoch stream (RX hot path) | |
 | Channel names matching MOTU's | Not done: better proposed on #192 | |
 
 ### MIDI
@@ -209,7 +209,37 @@ then checked against MOTU's own kext by decompiling its shipped symbols
 In ASFireWire the mixer is a control model for the ASFW app; it stays out of
 Core Audio, as CueMix does.
 
-## Hardware test checklist (macOS 26 + ASFireWire built from this branch)
+## Getting it upstream
+
+A self-built ASFireWire dext only installs with SIP off, so the hands-off route
+is for these changes to reach the maintainer's signed builds (asfw.net). The
+branch is split into reviewable pieces, each passing the full suite on its own:
+
+| Branch | Base | Size | Text |
+|---|---|---|---|
+| `pr/motu-clock-source` | `main` | +350 | [`upstream/pr-1-clock-source.md`](upstream/pr-1-clock-source.md) |
+| `pr/motu-latency` | clock source | +185 −63 | [`upstream/pr-2-latency.md`](upstream/pr-2-latency.md) |
+| `pr/motu-midi` | `main` | +1,196 −46 | [`upstream/pr-3-midi.md`](upstream/pr-3-midi.md) |
+| `pr/motu-cuemix` | latency | +1,727 −68 | proposed first as an issue: [`upstream/issue-cuemix.md`](upstream/issue-cuemix.md) |
+
+Nothing is published; that needs the owner's go-ahead.
+
+## Installing macOS 26 for the test
+
+`/Applications/Install macOS Tahoe.app` (26.7.1) is downloaded. Install it into
+the existing **Tahoe Test** volume (its own 188 GB partition), not Macintosh HD.
+Then, on Tahoe: install ASFireWire from https://www.asfw.net/install/, approve
+it, restart, power the UltraLite on, and run
+
+```
+"/Volumes/Macintosh HD - Data/Users/macbook/Documents/GitHub/Firewire lives/FireWire_Lives/scripts/macos26-ultralite-check.sh"
+```
+
+It writes a report folder to the Desktop. With today's signed build the clock
+source and MIDI checks report "expected only with the fixes"; everything else
+should pass.
+
+## Hardware test checklist (macOS 26 + ASFireWire with these changes)
 
 Beyond the test plan above:
 

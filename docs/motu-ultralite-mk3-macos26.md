@@ -161,7 +161,7 @@ difference is the driver.
 
 The code lives on branch `motu-ultralite-mk3-fixes` of a local ASFireWire
 clone (`../ASFireWire`), based on `main` at `0a3879e3` (2026-10-23). Nothing is
-pushed. Every change has host tests; ASFireWire's full C++ suite passes (3,942
+pushed. Every change has host tests; ASFireWire's full C++ suite passes (3,977
 tests). None of it has run on hardware under ASFireWire yet.
 
 This Mac cannot build the dext itself: Xcode 26.3 ships DriverKit 25.2, and
@@ -169,51 +169,57 @@ ASFireWire's unmodified `main` fails to compile against it with the same libc++
 errors. ASFireWire's `build.sh` "Bump Version" script also breaks on a path
 with a space in it ("Firewire lives"). Both are outside this work.
 
-1. **Validate what exists** (test plan above). Still the highest value, and
-   still needs macOS 26.
-2. **Clock source selection. Done** (`029a51f3`). `EncodeClockSourceV3` writes
-   the low byte of `0x0b14` as MOTU's driver does; `MotuProtocol` is now a
-   control provider whose one parameter, the clock source, the Core Audio
-   projection places on the global scope as a `'clck'` selector. Only the
-   UltraLite mk3 gets it. Side effect: Prism Orpheus's "Sync Source" now also
-   reaches Audio MIDI Setup.
-3. **Latency. Done as far as it can go without a loopback measurement**
-   (`f9e4015d`). The UltraLite mk3 declares MOTU's own latency per rate. The
-   safety offset is 64/128/256 frames by rate mode for every MOTU model, so it
-   no longer shrinks to a quarter of its duration at 4x; 1x is unchanged.
-4. **88.2–192 kHz. Pinned against MOTU's driver** (`d81c6aa5`). A test feeds
-   the registers MOTU's driver left at each rate and requires ASFireWire's
-   channels to equal MOTU's, in order. They already did. Playing audio at
-   those rates still needs hardware.
-5. **MIDI. Wire codec and receive path done** (`9259a71d`). `MotuMidi.hpp` has
-   the per-model slot (UltraLite mk3: 3rd quadlet, flag byte 8, data byte 7),
-   a receive demux and a paced transmit composer. The receive processor and
-   consumer read MOTU MIDI into the existing MIDI rings. Remaining, all in
-   DriverKit code this Mac cannot compile: publish the MOTU MIDI endpoints and
-   set the MOTU slot on the binding (nub and MIDI service), and drive the
-   transmit pacer from the MOTU payload writer with a counterpart to
-   `MidiTxComposer`'s reservation.
-6. **Channel names** to match MOTU's (`Main Out 1`, `Return 1`, ...). Not done:
-   ASFireWire's maintainer changed them in #192's build 22 with the tester, so
-   this is better proposed there than changed unilaterally.
-7. **CueMix mixer control. Not started; protocol identified.** The reference is
-   `snd-firewire-ctl-services` (ALSA project, LGPL-3.0, `protocols/motu/src/command_dsp.rs`),
-   which implements the UltraLite mk3's whole DSP: mixer, monitor, reverb, input
-   and output EQ and dynamics, meters. The protocol:
-   - Commands: block writes of at most 248 bytes to `0xffff'0001'0000`, each
-     frame a tag byte (0x02 for commands), a sequence number, then encoded
-     commands, padded to quadlets.
-   - State: the host registers a destination in `0xffff'e000'0000`+ through
-     `0x0b38`/`0x0b3c`; after `begin_messaging` (tags 0x01 then 0x02) the unit
-     sends its whole state, then every front-panel change, as block writes
-     that can span several frames.
+| Item | Status | Commits |
+|---|---|---|
+| Clock source (Internal / S/PDIF / SMPTE in Audio MIDI Setup) | Done | `029a51f3` |
+| Latency: MOTU's per-rate values; safety offset doubles per rate mode | Done | `f9e4015d` |
+| 88.2–192 kHz pinned against MOTU's driver | Done (audio needs hardware) | `d81c6aa5` |
+| MIDI in and out, one port each way | Done | `9259a71d`, `7f0c26af` |
+| CueMix mixer: 8 mixes × 10 sources, gain/pan/mute/solo, mix volume/mute/destination, main volume | Done | `94e0f4c3`, `abeaf649`, `6fd1d4f9` |
+| CueMix reverb, input/output EQ and dynamics, meters, talkback | Not started | |
+| Channel names matching MOTU's | Not done: better proposed on #192 | |
 
-   Work in ASFireWire: a block-write receive handler for that range (today's
-   MOTU mailbox takes only quadlet notifications), a frame reassembler and
-   command codec (pure, testable), and a control model with the mixer
-   parameters, shown by ASFireWire's existing Device Controls view. Readback
-   and sending can be checked on 15.8 first: `motuprobe` reads `0x0b38`/`0x0b3c`
-   to show whether MOTU's own driver uses this mechanism.
+### MIDI
+
+`MotuMidi.hpp` holds each model's slot (UltraLite mk3: third quadlet, flag
+byte 8, data byte 7, both ways). MIDI ports are published for MOTU endpoints
+from the model (`ProjectMotuMidiCapabilities`), the receive path lifts bytes
+into the MIDI ring, and `MotuMidiTxComposer` writes outgoing bytes into armed
+packets at the unit's cable speed. An end-to-end test through the real TX
+producer sends a Note On/Off and checks that nothing outside the MIDI slot
+changes.
+
+### CueMix
+
+Protocol from `snd-firewire-ctl-services` (`protocols/motu/src/command_dsp.rs`),
+then checked against MOTU's own kext by decompiling its shipped symbols
+(`BoxWithFxDSP`):
+
+- The host registers a message destination with **one 8-byte block write to
+  `0x0b38`** (host node ID, then the 48-bit offset), and writes **all ones** to
+  stop. The registers are write-only: reading them gives an address error.
+- Commands are block writes of at most 248 bytes to **`0xffff'0001'0000`**
+  (MOTU's `SetCueMixPacket` sends 1–255 bytes there): tag, sequence number,
+  commands, zero padding to a quadlet.
+- The unit sends its state, then every front-panel change, to the destination.
+  MOTU's kext passes these frames to CueMix FX unparsed, so their content is
+  the reference's description, not vendor-confirmed. The float values are
+  little-endian per the reference's code (its comments say big-endian).
+
+In ASFireWire the mixer is a control model for the ASFW app; it stays out of
+Core Audio, as CueMix does.
+
+## Hardware test checklist (macOS 26 + ASFireWire built from this branch)
+
+Beyond the test plan above:
+
+1. Clock source menu in Audio MIDI Setup shows Internal / S/PDIF / SMPTE and
+   switching it changes the front panel.
+2. A MIDI keyboard into MIDI IN appears in a DAW; a DAW sending to MIDI OUT
+   plays a synth.
+3. The ASFW app's Device Controls shows the mixer with the unit's current
+   settings; moving a fader changes the sound; turning the front-panel knob
+   updates the app.
 
 ## Tools in this repository
 

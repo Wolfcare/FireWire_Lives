@@ -1,4 +1,4 @@
-# build/motuprobe while the MOTU 1.6 89555 driver streams at 44.1 kHz (macOS 15.8, 2026-10-25)
+# build/motuprobe while the MOTU 1.6 89555 driver streams at 44100 Hz, read after the rate field settled + 2 s (macOS 15.8, 2026-10-25)
 MOTU unit, version 0x000019: UltraLite mk3 (FireWire)
   protocol v3
   node 0xffc0, bus generation 2

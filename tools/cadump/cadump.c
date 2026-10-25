@@ -5,12 +5,13 @@
  * the vendor's own driver publishes on macOS 15 for the same hardware.
  * Channel names, stream layout, sample rates, clock sources and latencies.
  *
- * Read-only unless --rate is given, which sets the nominal sample rate so
- * the per-rate channel layout can be recorded, the way a user would in
- * Audio MIDI Setup.
+ * Read-only unless --rate or --clock is given. Those set the nominal sample
+ * rate or the clock source, the way a user would in Audio MIDI Setup, so the
+ * per-rate layout and the vendor driver's register writes can be recorded.
  *
  * Build: make cadump
- * Usage: cadump [--rate HZ] [name-substring]   (default substring: "MOTU")
+ * Usage: cadump [--rate HZ] [--clock ID] [name-substring]
+ *        (default substring: "MOTU"; clock IDs are listed in the dump)
  */
 
 #include <stdio.h>
@@ -105,6 +106,23 @@ static int set_rate(AudioObjectID dev, Float64 rate)
     const struct timespec step = { 0, 100 * 1000 * 1000 };
     for (int i = 0; i < 50; i++) {
         if (get_rate(dev) == rate)
+            return 0;
+        nanosleep(&step, NULL);
+    }
+    return -1;
+}
+
+static int set_clock(AudioObjectID dev, UInt32 id)
+{
+    AudioObjectPropertyAddress a = addr(kAudioDevicePropertyClockSource,
+                                        kAudioObjectPropertyScopeGlobal,
+                                        kAudioObjectPropertyElementMain);
+    if (AudioObjectSetPropertyData(dev, &a, 0, NULL, sizeof(id), &id) != noErr)
+        return -1;
+
+    const struct timespec step = { 0, 100 * 1000 * 1000 };
+    for (int i = 0; i < 50; i++) {
+        if (get_u32(dev, a, ~0u) == id)
             return 0;
         nanosleep(&step, NULL);
     }
@@ -230,10 +248,13 @@ int main(int argc, char **argv)
 {
     const char *needle = "MOTU";
     Float64 rate = 0;
+    long clock = -1;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rate") == 0 && i + 1 < argc)
             rate = strtod(argv[++i], NULL);
+        else if (strcmp(argv[i], "--clock") == 0 && i + 1 < argc)
+            clock = strtol(argv[++i], NULL, 0);
         else
             needle = argv[i];
     }
@@ -246,6 +267,11 @@ int main(int argc, char **argv)
 
     if (rate > 0 && set_rate(dev, rate) != 0) {
         printf("could not set %.0f Hz\n", rate);
+        return 1;
+    }
+
+    if (clock >= 0 && set_clock(dev, (UInt32)clock) != 0) {
+        printf("could not select clock source 0x%lx\n", clock);
         return 1;
     }
 

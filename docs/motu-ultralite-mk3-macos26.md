@@ -74,11 +74,19 @@ every port (see the test plan).
 
 ### Clock sources
 
-| ID | Name |
-|---|---|
-| `0x0` | Internal |
-| `0x2` | S/PDIF |
-| `0x6` | SMPTE |
+What MOTU's driver publishes in Core Audio, and what it writes to the unit
+when each is selected (`cadump --clock ID`, then `motuprobe`, at 44.1 kHz):
+
+| Core Audio ID | Name | `0x0b14` written | Source field (low byte) |
+|---|---|---|---|
+| `0x0` | Internal | `0x02000000` | `0x00` |
+| `0x2` | S/PDIF | `0x02000010` | `0x10` |
+| `0x6` | SMPTE | `0x02000002` | `0x02` |
+
+Only the low byte changes; the rate field and the fetch bit are kept. The
+source values are the ones Linux `motu-protocol-v3.c` decodes, so a write
+path can reuse its constants. Nothing was connected to the S/PDIF or SMPTE
+inputs, and the driver accepted the selection anyway.
 
 ### Latency and safety offset (frames)
 
@@ -111,6 +119,23 @@ MOTU's driver allocates them the same way across models.
 Idle, before any driver had touched the unit, `0x0b04` and `0x0b08` read
 `0xffffffff` and the fetch bit was clear.
 
+At the other rates, only the rate field of `0x0b14` changes. Channels 33/34,
+the packet format and the fetch bit stay the same:
+
+| Rate | `0x0b00` | `0x0b10` | `0x0b14` |
+|---|---|---|---|
+| 44.1 kHz | `0x61620000` | `0x00000002` | `0x02000000` |
+| 48 kHz | `0x61620000` | `0x00000002` | `0x02000100` |
+| 88.2 kHz | `0x61620000` | `0x00000002` | `0x02000200` |
+| 96 kHz | `0x61620000` | `0x00000002` | `0x02000300` |
+| 176.4 kHz | `0x61620000` | `0x00000002` | `0x02000400` |
+| 192 kHz | `0x61620000` | `0x00000002` | `0x02000500` |
+
+One oddity: once, after a run of fast switches, the register still read
+192 kHz while Core Audio already reported 44.1 kHz. A re-read some seconds
+later showed the right value. MOTU's driver may apply the rate to the unit
+lazily, so read the register only after it settles.
+
 ## Test plan on macOS 26
 
 The test machine dual-boots: macOS 15.8 stays as the reference with MOTU's
@@ -136,12 +161,10 @@ difference is the driver.
 
 1. **Validate what exists** (test plan above). Highest value, no code. Every
    later item depends on knowing the baseline is solid.
-2. **Clock source selection.** Write the source field of `0x0b14` (`0x00`
-   internal, `0x10` S/PDIF coax, `0x02` SMPTE per Linux
-   `motu-protocol-v3.c`), and publish the list in Core Audio as MOTU does. The
-   Linux driver only reads the source, so the write path needs checking against
-   MOTU's driver on 15.8: set S/PDIF in Audio MIDI Setup and read `0x0b14` with
-   `motuprobe`.
+2. **Clock source selection.** Read-modify-write the low byte of `0x0b14`:
+   `0x00` internal, `0x10` S/PDIF, `0x02` SMPTE, keeping the rate field and
+   fetch bit. Confirmed against MOTU's driver (table above). Publish the
+   three sources in Core Audio as MOTU does.
 3. **Channel names** to match MOTU's (`Main Out 1`, `Return 1`, ...), so DAW
    templates made on 15.8 carry over. Small change in `MotuPortLayout.hpp`.
 4. **Latency values** measured on hardware with a loopback cable, using MOTU's

@@ -1,0 +1,4 @@
+# Clock source selected in Core Audio (build/cadump --clock ID) and register 0x0b14 as MOTU 1.6 89555 then writes it, 44.1 kHz, macOS 15.8, 2026-10-25
+Internal (0x0)  0x0b14 = 0x02000000
+S/PDIF   (0x2)  0x0b14 = 0x02000010
+SMPTE    (0x6)  0x0b14 = 0x02000002

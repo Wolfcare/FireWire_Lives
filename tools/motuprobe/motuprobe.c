@@ -49,6 +49,10 @@
 #define  V3_CLOCK_RATE_SHIFT 8
 #define V3_CLK_WAIT_MSEC    4000
 #define V3_OPT_IFACE_MODE   0x0c94u
+/* Command-DSP models: where the unit sends its mixer state (snd-firewire-ctl-services
+ * protocols/motu/src/command_dsp.rs). */
+#define V3_DSP_MSG_DST_HI   0x0b38u
+#define V3_DSP_MSG_DST_LO   0x0b3cu
 
 static const unsigned clock_rates[] = { 44100, 48000, 88200, 96000,
                                         176400, 192000 };
@@ -319,6 +323,8 @@ static void probe_unit(io_service_t unit, unsigned set_rate)
         { "packet format",     PACKET_FORMAT },
         { "v3 clock status",   V3_CLOCK_STATUS },
         { "v3 opt iface mode", V3_OPT_IFACE_MODE },
+        { "dsp msg dst hi",    V3_DSP_MSG_DST_HI },
+        { "dsp msg dst lo",    V3_DSP_MSG_DST_LO },
     };
 
     printf("\n  register           offset  value\n");

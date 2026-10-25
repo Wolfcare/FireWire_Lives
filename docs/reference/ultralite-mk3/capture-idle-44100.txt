@@ -1,0 +1,16 @@
+# build/cadump --capture 2 with nothing plugged in (MOTU 1.6 89555, macOS 15.8, 44.1 kHz, 2026-10-25)
+capture: 2.0 s, 173 callbacks, 88576 frames (44288 frames/s)
+    in  1  Analog 1     peak 0.000045
+    in  2  Analog 2     peak 0.000042
+    in  3  Analog 3     peak 0.000030
+    in  4  Analog 4     peak 0.000034
+    in  5  Analog 5     peak 0.000013
+    in  6  Analog 6     peak 0.000012
+    in  7  Analog 7     peak 0.000015
+    in  8  Analog 8     peak 0.000014
+    in  9  S/PDIF 1     peak 0.000000
+    in 10  S/PDIF 2     peak 0.000000
+    in 11  Return 1     peak 0.000029
+    in 12  Return 2     peak 0.000025
+    in 13  Reverb 1     peak 0.000000
+    in 14  Reverb 2     peak 0.000000

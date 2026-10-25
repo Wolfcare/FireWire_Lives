@@ -8,9 +8,11 @@
  * Read-only unless --rate or --clock is given. Those set the nominal sample
  * rate or the clock source, the way a user would in Audio MIDI Setup, so the
  * per-rate layout and the vendor driver's register writes can be recorded.
+ * --capture SECONDS records from the device and prints each input channel's
+ * peak: proof that capture streams, with no audio file written.
  *
  * Build: make cadump
- * Usage: cadump [--rate HZ] [--clock ID] [name-substring]
+ * Usage: cadump [--rate HZ] [--clock ID] [--capture SECONDS] [name-substring]
  *        (default substring: "MOTU"; clock IDs are listed in the dump)
  */
 
@@ -201,6 +203,80 @@ static void dump_clock_sources(AudioObjectID dev)
     free(ids);
 }
 
+/* Input peaks gathered by the IO proc, one per input channel in device order. */
+#define MAX_CAPTURE_CHANNELS 64
+static struct {
+    float peak[MAX_CAPTURE_CHANNELS];
+    unsigned channels;
+    unsigned long callbacks;
+    unsigned long frames;
+    volatile int measuring;  /* counts start after the warm-up */
+} capture;
+
+static OSStatus capture_proc(AudioObjectID device, const AudioTimeStamp *now,
+                             const AudioBufferList *input, const AudioTimeStamp *inputTime,
+                             AudioBufferList *output, const AudioTimeStamp *outputTime,
+                             void *context)
+{
+    (void)device; (void)now; (void)inputTime; (void)output; (void)outputTime; (void)context;
+    if (!capture.measuring) return noErr;
+    unsigned base = 0;
+    for (UInt32 b = 0; input && b < input->mNumberBuffers; b++) {
+        const AudioBuffer *buf = &input->mBuffers[b];
+        const UInt32 ch = buf->mNumberChannels;
+        if (ch == 0 || buf->mData == NULL) continue;
+        const float *samples = buf->mData;
+        const UInt32 frames = buf->mDataByteSize / (UInt32)(sizeof(float) * ch);
+        for (UInt32 f = 0; f < frames; f++)
+            for (UInt32 c = 0; c < ch && base + c < MAX_CAPTURE_CHANNELS; c++) {
+                float v = samples[f * ch + c];
+                if (v < 0) v = -v;
+                if (v > capture.peak[base + c]) capture.peak[base + c] = v;
+            }
+        if (b == 0) capture.frames += frames;
+        base += ch;
+    }
+    if (base > capture.channels) capture.channels = base < MAX_CAPTURE_CHANNELS ? base : MAX_CAPTURE_CHANNELS;
+    capture.callbacks++;
+    return noErr;
+}
+
+static int run_capture(AudioObjectID dev, double seconds)
+{
+    AudioDeviceIOProcID proc = NULL;
+    if (AudioDeviceCreateIOProcID(dev, capture_proc, NULL, &proc) != noErr || proc == NULL) {
+        printf("capture: cannot create an IO proc\n");
+        return -1;
+    }
+    memset(&capture, 0, sizeof(capture));
+    if (AudioDeviceStart(dev, proc) != noErr) {
+        printf("capture: device did not start\n");
+        AudioDeviceDestroyIOProcID(dev, proc);
+        return -1;
+    }
+    /* A device that just started (or just changed rate) takes a moment to run
+     * at speed; measure only after half a second. */
+    const struct timespec warmup = { 0, 500 * 1000 * 1000 };
+    nanosleep(&warmup, NULL);
+    capture.measuring = 1;
+    const struct timespec wait = { (time_t)seconds, (long)((seconds - (double)(time_t)seconds) * 1e9) };
+    nanosleep(&wait, NULL);
+    capture.measuring = 0;
+    AudioDeviceStop(dev, proc);
+    AudioDeviceDestroyIOProcID(dev, proc);
+
+    printf("capture: %.1f s, %lu callbacks, %lu frames (%.0f frames/s)\n", seconds,
+           capture.callbacks, capture.frames, (double)capture.frames / seconds);
+    for (unsigned c = 0; c < capture.channels; c++) {
+        char name[256];
+        if (get_string(dev, addr(kAudioObjectPropertyElementName, kAudioObjectPropertyScopeInput, c + 1),
+                       name, sizeof(name)) != 0 || name[0] == '\0')
+            strcpy(name, "(unnamed)");
+        printf("    in %2u  %-12s peak %.6f\n", c + 1, name, capture.peak[c]);
+    }
+    return capture.callbacks > 0 && capture.frames > 0 ? 0 : -1;
+}
+
 static void dump_device(AudioObjectID dev)
 {
     AudioObjectPropertyAddress g = addr(0, kAudioObjectPropertyScopeGlobal,
@@ -249,12 +325,15 @@ int main(int argc, char **argv)
     const char *needle = "MOTU";
     Float64 rate = 0;
     long clock = -1;
+    double captureSeconds = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--rate") == 0 && i + 1 < argc)
             rate = strtod(argv[++i], NULL);
         else if (strcmp(argv[i], "--clock") == 0 && i + 1 < argc)
             clock = strtol(argv[++i], NULL, 0);
+        else if (strcmp(argv[i], "--capture") == 0 && i + 1 < argc)
+            captureSeconds = strtod(argv[++i], NULL);
         else
             needle = argv[i];
     }
@@ -276,5 +355,6 @@ int main(int argc, char **argv)
     }
 
     dump_device(dev);
+    if (captureSeconds > 0) return run_capture(dev, captureSeconds) == 0 ? 0 : 1;
     return 0;
 }

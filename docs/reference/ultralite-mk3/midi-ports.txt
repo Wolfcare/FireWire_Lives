@@ -1,0 +1,5 @@
+# build/mididump with MOTU 1.6 89555 on macOS 15.8, 2026-10-25
+source       UltraLite mk3 MIDI Port
+source       UltraLite mk3 Sync Port
+destination  UltraLite mk3 MIDI Port
+2 source(s), 1 destination(s) matching "UltraLite"

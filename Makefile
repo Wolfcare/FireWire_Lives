@@ -20,10 +20,11 @@ TEST_BIN := $(BUILD)/fwtest
 PROBE_BIN := $(BUILD)/fwprobe
 MOTU_BIN  := $(BUILD)/motuprobe
 CADUMP_BIN := $(BUILD)/cadump
+MIDIDUMP_BIN := $(BUILD)/mididump
 
-.PHONY: all test probe motu cadump clean asan
+.PHONY: all test probe motu cadump mididump clean asan
 
-all: $(TEST_BIN) $(PROBE_BIN) $(MOTU_BIN) $(CADUMP_BIN)
+all: $(TEST_BIN) $(PROBE_BIN) $(MOTU_BIN) $(CADUMP_BIN) $(MIDIDUMP_BIN)
 
 # ---- core objects ----
 $(BUILD)/core/%.o: src/core/%.c
@@ -53,6 +54,11 @@ $(CADUMP_BIN): tools/cadump/cadump.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $^ -o $@ -framework CoreAudio -framework CoreFoundation
 
+# ---- mididump: CoreMIDI endpoints a driver published ----
+$(MIDIDUMP_BIN): tools/mididump/mididump.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $^ -o $@ -framework CoreMIDI -framework CoreFoundation
+
 test: $(TEST_BIN)
 	@$(TEST_BIN)
 
@@ -75,6 +81,9 @@ motu: $(MOTU_BIN)
 
 cadump: $(CADUMP_BIN)
 	@$(CADUMP_BIN) || true
+
+mididump: $(MIDIDUMP_BIN)
+	@$(MIDIDUMP_BIN) || true
 
 clean:
 	rm -rf $(BUILD)

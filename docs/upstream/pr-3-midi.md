@@ -29,5 +29,3 @@ Audio wire (MOTU), the receive processor and consumer, MIDI capabilities and pub
 
 - DICE MIDI: publication and the AM824 composer are untouched apart from a shared seam-mapping helper; the existing AM824 MIDI tests pass unchanged.
 - MOTU models now get MIDI ports where Linux lists a slot (828mk2, Traveler, UltraLite, 8pre, 828mk3, Traveler mk3, UltraLite mk3, Track16; Audio Express mixed); none for the 896HD, 896mk3, 4pre and V1 models.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

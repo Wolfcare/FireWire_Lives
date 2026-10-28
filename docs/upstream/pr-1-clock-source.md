@@ -34,5 +34,3 @@ Follows #192 (UltraLite mk3 hardware reports).
 
 - The projection change is generic: the Prism Orpheus "Sync Source" (a `ClockSource` parameter on its port-less settings node) now also appears in Audio MIDI Setup. It was app-only before. Untested on that device.
 - Other MOTU models: unchanged (no control).
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

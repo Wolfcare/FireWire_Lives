@@ -27,5 +27,3 @@ A new test feeds the clock status MOTU's driver left on the unit at each of the 
 ## Regression risks
 
 Every MOTU model: larger safety offsets at 2x and 4x only. 1x is unchanged.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

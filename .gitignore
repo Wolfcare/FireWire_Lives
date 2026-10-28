@@ -7,3 +7,6 @@ build/
 DerivedData/
 *.xcuserstate
 xcuserdata/
+
+# Check-script reports (scripts/macos26-ultralite-check.sh)
+reports/

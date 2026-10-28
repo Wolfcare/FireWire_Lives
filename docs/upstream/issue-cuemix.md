@@ -22,5 +22,3 @@ The mk3 family (828mk3, 896mk3, UltraLite mk3, Traveler mk3, Track16) has a DSP 
 
 1. Is a ~1,500-parameter control model what you want in the app, or should a first PR carry only the mixer (8 × 10 crosspoints + mix outputs)?
 2. Meters arrive inside the isoch stream (Linux `motu-command-dsp-message-parser.c`) and would touch the RX hot path; the branch leaves them out.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

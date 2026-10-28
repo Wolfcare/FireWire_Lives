@@ -10,8 +10,8 @@
 # It checks the driver extension, the device in Core Audio at every sample rate
 # (channel counts and names), that capture really streams, the clock source
 # menu, and the MIDI ports, then collects the driver's logs. Everything goes to
-# a folder on the Desktop with a summary in report.md; attach that folder to
-# ASFireWire issue #192.
+# a folder under reports/ in this repository (git-ignored) with a summary in
+# report.md; attach that folder to an ASFireWire issue.
 #
 # It changes the sample rate and the clock source while it runs, and puts both
 # back to 44.1 kHz / Internal at the end. Nothing else is written.
@@ -22,7 +22,7 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 cadump="$here/build/cadump"
 mididump="$here/build/mididump"
 ref="$here/docs/reference/ultralite-mk3"
-out="$HOME/Desktop/ASFW-UltraLite-mk3-$(date +%Y%m%d-%H%M%S)"
+out="$here/reports/ASFW-UltraLite-mk3-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out/raw"
 report="$out/report.md"
 device="UltraLite"
